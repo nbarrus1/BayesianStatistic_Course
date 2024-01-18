@@ -170,4 +170,15 @@ varCov
 #####For the MLE of both the mean and the sd, what is the pointwise 
 #####log-likelihood of each of the 20 data points?  Plot the pointwise LL 
 #####against the length data. What pattern do you see? 
-  
+
+MLE_mean = meanSdModel$par[1]
+MLE_sd = meanSdModel$par[2]
+point.LL <- dnorm(x = lengthDat, mean = MLE_mean, sd = MLE_sd, log = TRUE)
+point.LL
+
+
+tibble (x = lengthDat, y = exp(point.LL)) |> 
+ggplot(aes(x = x, y = y)) +
+  geom_point()+
+  geom_line()+
+  labs(x = "Lengths", y = "Point Log-likelihoods")
