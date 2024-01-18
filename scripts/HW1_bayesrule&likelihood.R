@@ -1,7 +1,7 @@
-#Script Title: Bayesian Statistics Homework2-Bayes Rule & Likelihoods
+#Script Title: Bayesian Statistics Homework1-Bayes Rule & Likelihoods
 #Date first created: 1/18/2024
-#purpose: The purpose of this script is to work through Homework 2 which 
-#which contains our first problem set. The problems are related to lectures
+#purpose: The purpose of this script is to work through Homework 1 which 
+#contains our first problem set. The problems are related to lectures
 #1 and 2 which are over bayes rule and likelihoods, respectively. 
 
 #----------------------------
