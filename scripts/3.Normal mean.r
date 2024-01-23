@@ -3,6 +3,7 @@
 library(R2jags)
 library(tidyverse)
 library(ggmcmc)
+library(here)
 theme_set(theme_bw())
 #Set correct working directory
 #setwd("~/Dropbox/Babcock Bayesian/lectures/lecture 2. Estimate a mean")
@@ -79,15 +80,17 @@ write("model{
   {
     Y[i] ~ dnorm(m, prec) # diameter drawn from normal (likelihood)
   }
-}", file="Box1.8NormalMeanKnownVariance.txt")
+}", file=here("JAGS_mods","Box1.8NormalMeanKnownVariance.txt"))
 
 meanResult<-jags(data=list(Y=Y,stdev=sd(Y)),
   parameters.to.save = c("m"),
-  model.file = "Box1.8NormalMeanKnownVariance.txt",
-  n.iter=100000,
+  model.file = here("JAGS_mods","Box1.8NormalMeanKnownVariance.txt"),
+  n.iter=1000000,
   n.burnin=1000
 )
 
+summary(meanResult)
+summary(meanResult$BUGSoutput)
 meanResult$BUGSoutput$summary  
 
 ##ggmcmc for looking at whether the model converged
