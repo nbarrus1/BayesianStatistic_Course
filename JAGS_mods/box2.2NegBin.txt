@@ -1,0 +1,5 @@
+model{
+  x ~ dnegbin(r, 3)	# number of females sampled neg. binomially
+  r ~ dunif(0, 1)		# uninformative prior for the sex ratio of pouch young
+}
+
