@@ -1,0 +1,9 @@
+model{
+  vmeandiff ~ dnorm(0, 1.0E-6)					# uninformative prior for mean vert. diff.
+  prec ~ dgamma(0.001, 0.001) 					# uninf. prior for precision of vert. diff.
+  probpos<-step(vmeandiff)
+  for (i in 1:17)  											# for each of the 17 spiders
+  {
+    VertDiff[i] ~ dnorm(vmeandiff, prec)  # observed diff. drawn from a normal dist'n
+  }
+}

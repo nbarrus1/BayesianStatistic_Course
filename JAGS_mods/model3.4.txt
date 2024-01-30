@@ -1,0 +1,8 @@
+model{
+  for (i in 1:10)					# for each of the ten quadrats
+  {
+     y[i] ~ dpois(m)			# number of trees drawn from Poisson with mean m
+  }
+
+  m ~ dlnorm(0.0, 1.0E-6)  # uninformative prior for mean trees per quadrat
+}

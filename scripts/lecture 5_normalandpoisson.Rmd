@@ -1,0 +1,260 @@
+---
+title: "Lecture 5"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# R code for JAGS examples and plots from lecture 5 
+
+```{r,message=FALSE,error=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(here)
+theme_set(theme_bw())
+```
+
+## Box 3.2 Estimating mean and variance from normal data
+
+```{r}
+write("
+model
+{
+  mean ~ dnorm(0, 1.0E-6)  	# mean diameter of trees in the remnant (uninformative prior)
+  Var ~ dlnorm(0.0, 1.0E-6)  # variance of tree diameters (uninformative prior)
+ # the following replace the above when using informative priors
+ # mean ~ dnorm(53, 0.04)  # prior with mean 53 and sd 5 (prec=1/(5*5))
+ # var ~ dlnorm(4.75, 3.05)  # informative prior for variance
+  prec <- 1/Var							# converts variance to precision
+  for (i in 1:10)  					# for each of the ten trees
+  {
+    Y[i] ~ dnorm(mean, prec)  # tree diameter drawn from normal distribution
+  }
+}
+",here("JAGS_mods","model3.2var.txt"))
+
+Data<- list(Y=c(42, 43, 58, 70, 47, 51, 85, 63, 58, 46)) # site 2 sample
+
+InitialValues<- list(list(Var=100, mean=100),
+  list(Var=200,mean=50))
+
+model3.2var.res<-jags(data=Data,
+  inits=InitialValues,
+  parameters.to.save = c("mean","Var","prec"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file = here("JAGS_mods","model3.2var.txt"))
+
+print(model3.2var.res)
+gg3.2var<-ggs(as.mcmc(model3.2var.res))  #Make the JAGS output an MCMC object and make the MCMC object a ggs object for plotting
+
+#note that in the ggs_pairs the diagonal plots are marginal distributions,
+#the lower subdiagonal is the joint distributions, and the upper subdiagonal
+#is the correlation between the 2 parameters.
+
+ggs_pairs(filter(gg3.2var,Parameter %in% c("mean","Var")))  
+ggs_pairs(filter(gg3.2var,Parameter %in% c("mean","Var")),lower=list(continuous="density"))
+ggs_density(gg3.2var)  #Density plot
+ggs_traceplot(gg3.2var)  # Trace plot
+```
+
+## Alternative mean priors
+
+```{r}
+write("
+model
+{
+  mean ~ dnorm(50, 0.0001)  	# mean with vague prior
+  Var ~ dlnorm(0.0, 1.0E-6)  # variance of tree diameters (uninformative prior)
+  prec <- 1/Var							# converts variance to precision
+  for (i in 1:10)  					# for each of the ten trees
+  {
+    Y[i] ~ dnorm(mean, prec)  # tree diameter drawn from normal distribution
+  }
+}
+",here("JAGS_mods","model3.2var2.txt"))
+
+model3.2var2.res<-jags(data=Data,
+  inits=InitialValues,
+  parameters.to.save = c("mean","Var","prec"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file = here("JAGS_mods","model3.2var2.txt"))
+
+#compare results
+gg3.2var2<-ggs(as.mcmc(model3.2var2.res)) 
+gg3.2<-bind_rows(list(`1000`=filter(gg3.2var,Parameter=="mean"),
+  `100`=filter(gg3.2var2,Parameter=="mean")),.id="Prior mean sd") %>%
+  mutate(Chain=factor(Chain))
+ggplot(gg3.2,aes(x=value,fill=Chain,color=Chain))+
+  geom_density(alpha=0.5)+
+  facet_wrap(`Prior mean sd`~.,ncol=1)
+bind_rows(list(`1000`=round(model3.2var.res$BUGSoutput$summary["mean",],2),
+  `100`=round(model3.2var2.res$BUGSoutput$summary["mean",],2)),.id="Prior mean sd")
+
+```
+
+## Alternative variance priors.
+
+```{r}
+n=100
+priors<-data.frame(prior=rep(c("lognormal on variance",
+  "uniform  on standard deviation",
+  "uniform on log(sd)", 
+  "gamma on precision",
+  "exponential on sd"),each=n)) %>% 
+mutate(sd=rep(seq(0.01,10,length=n),5),
+  var=sd^2,
+  prec=1/var,
+  logsd=log(sd)) %>%
+mutate(Probability=case_when(prior=="lognormal on variance"~dlnorm(var,0,1),
+  prior=="uniform  on standard deviation"~dunif(sd,0,10),
+  prior=="uniform on log(sd)"~dexp(sd,1/log(5)), 
+  prior=="gamma on precision"~dgamma(prec,2,1),
+  prior=="exponential on sd"~dexp(sd,1),
+  TRUE~NA))
+
+ggplot(priors,aes(x=sd,y=Probability,color=prior))+
+  geom_line(linewidth=1)+
+  ggtitle("Priors for standard deviation")
+
+```
+
+## Running the model will several alternative variance priors
+
+Change the comments to change the prior set up. 
+
+```{r}
+write("model
+{
+  mean ~ dnorm(100, 1E-6)  #prior for mean	
+  #Prior on precision
+#  prec ~ dgamma(0.01,0.001)   
+#  Var <- 1/prec
+#  sd <- sqrt(Var)
+  #Prior on sd
+  sd~dexp(0.1)
+#  sd~dunif(0,100)   
+#  sd~dunif(0,10)  #Prior that is too constrained and biases answer
+  Var <- sd *sd
+  prec <- 1/Var
+  #likelihood
+  for (i in 1:10)  		 	
+  {
+    Y[i] ~ dnorm(mean, prec)
+  }
+}
+", file=here("JAGS_mods","model3.2alt.txt"))
+
+#If you initialize, must be on estimated parameter
+model3.2alt.res<-jags(data=Data,
+#   inits=list(list(prec=1),list(prec=2)),
+  inits=list(list(sd=2),list(sd=1)),  #for sd as the estimated parameter
+#  inits=list(list(Var=2),list(Var=1)),  #for Var as the estimated parameter
+  parameters.to.save = c("mean","Var","prec","sd"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file = here("JAGS_mods","model3.2alt.txt"))
+
+print(model3.2alt.res)
+gg3.2alt<-ggs(as.mcmc(model3.2alt.res))  #Make the JAGS output an MCMC object and make the MCMC object a ggs object for plotting
+gg3.2alt<-filter(gg3.2alt,Parameter %in% c("sd"))
+ggs_density(gg3.2alt)  #Density plot
+```
+
+# Box 3.7 Mean difference and using step for probabilities
+
+##(KIND OF LIKE A PAIRED-T.TEST)
+
+```{r}
+write("model{
+  vmeandiff ~ dnorm(0, 1.0E-6)					# uninformative prior for mean vert. diff.
+  prec ~ dgamma(0.001, 0.001) 					# uninf. prior for precision of vert. diff.
+  probpos<-step(vmeandiff)
+  for (i in 1:17)  											# for each of the 17 spiders
+  {
+    VertDiff[i] ~ dnorm(vmeandiff, prec)  # observed diff. drawn from a normal dist'n
+  }
+}",file=here("JAGS_mods","model3.7.txt"))
+
+InitialValues<-list(list(vmeandiff=0, prec=100),list(vmeandiff=10, prec=200))
+Data<-list(VertDiff=c(-220,-120,-80	,-130,	-10	,-60	,-40	,60	,-10	,40	,-30	,30	,30	,110	,
+90	,70	,-80	))
+
+model3.7.res<-jags(data=Data,
+  inits = InitialValues,
+  parameters.to.save = c("vmeandiff","prec","probpos"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file=here("JAGS_mods","model3.7.txt"))
+
+round(model3.7.res$BUGSoutput$summary,4)
+```
+
+## Looking at individual mcmc draws.
+
+```{r}
+dim(model3.7.res$BUGSoutput$sims.array)
+dim(model3.7.res$BUGSoutput$sims.matrix)
+ggs3.7<-ggs(as.mcmc(model3.7.res))
+head(ggs3.7)
+ggs_pairs(filter(ggs3.7,Parameter %in% c("vmeandiff","probpos")))
+ggs_density(filter(ggs3.7,Parameter %in% c("vmeandiff")))
+ggs3.7 %>% filter(Parameter == "vmeandiff") %>%
+  summarize(ProbPos=mean(value>0))
+#or
+vmeandiff<-model3.7.res$BUGSoutput$sims.matrix[,"vmeandiff"]
+length(vmeandiff[vmeandiff>0])/length(vmeandiff)
+
+```
+# Sample size for given posterior sd
+
+```{r}
+sampleSize<-data.frame(priorsd=c(1000,22.8)) %>%
+  mutate(required.n=94.8^2*(1/100-1/priorsd^2))
+sampleSize
+```
+
+# Box 3.4 Poisson mean
+
+```{r}
+write("model{
+  for (i in 1:10)					# for each of the ten quadrats
+  {
+     y[i] ~ dpois(m)			# number of trees drawn from Poisson with mean m
+  }
+
+  m ~ dlnorm(0.0, 1.0E-6)  # uninformative prior for mean trees per quadrat
+}",here("JAGS_mods","model3.4.txt"))
+
+Data<-list(y=c(6,0,1,2,1,7,1,5,2,0))
+
+InitialValues<-list(list(m=5),list(m=4))
+
+model3.4.res<-jags(data=Data,
+  inits = InitialValues,
+  parameters.to.save = c("m"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file=here("JAGS_mods","model3.4.txt"))
+
+model3.4.res$BUGSoutput
+ggs3.4<-filter(ggs(as.mcmc(model3.4.res)),Parameter=="m")
+ggs_density(ggs3.4)
+
+#Fit compared to data
+ggplot(data.frame(Trees=Data$y),aes(x=Trees))+geom_histogram(bins=8,fill="lightblue",color="darkblue")+
+  geom_line(data=data.frame(Trees=0:7,Count=length(Data$y)*dpois(0:7,2.5)),aes(x=Trees,y=Count),lwd=2)
+```
+  

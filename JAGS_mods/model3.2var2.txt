@@ -1,0 +1,12 @@
+
+model
+{
+  mean ~ dnorm(50, 0.0001)  	# mean with vague prior
+  Var ~ dlnorm(0.0, 1.0E-6)  # variance of tree diameters (uninformative prior)
+  prec <- 1/Var							# converts variance to precision
+  for (i in 1:10)  					# for each of the ten trees
+  {
+    Y[i] ~ dnorm(mean, prec)  # tree diameter drawn from normal distribution
+  }
+}
+

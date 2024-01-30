@@ -177,7 +177,7 @@ point.LL <- dnorm(x = lengthDat, mean = MLE_mean, sd = MLE_sd, log = TRUE)
 point.LL
 
 
-tibble (x = lengthDat, y = exp(point.LL)) |> 
+tibble (x = lengthDat, y = point.LL) |> 
 ggplot(aes(x = x, y = y)) +
   geom_point()+
   geom_line()+

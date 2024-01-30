@@ -1,0 +1,15 @@
+
+model
+{
+  mean ~ dnorm(0, 1.0E-6)  	# mean diameter of trees in the remnant (uninformative prior)
+  Var ~ dlnorm(0.0, 1.0E-6)  # variance of tree diameters (uninformative prior)
+ # the following replace the above when using informative priors
+ # mean ~ dnorm(53, 0.04)  # prior with mean 53 and sd 5 (prec=1/(5*5))
+ # var ~ dlnorm(4.75, 3.05)  # informative prior for variance
+  prec <- 1/Var							# converts variance to precision
+  for (i in 1:10)  					# for each of the ten trees
+  {
+    Y[i] ~ dnorm(mean, prec)  # tree diameter drawn from normal distribution
+  }
+}
+
