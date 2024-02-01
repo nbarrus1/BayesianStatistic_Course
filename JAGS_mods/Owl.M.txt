@@ -1,0 +1,12 @@
+model
+{
+ave.age ~ dunif(5, 50)
+M.inst<- 1/ave.age
+m <- 1-exp(-M.inst)
+ave.age.prior~ dunif(5, 50)
+m.prior <- 1-exp(-1/ave.age.prior)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+

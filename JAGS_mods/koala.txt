@@ -1,0 +1,7 @@
+
+model
+{
+  Y[1:9] ~ dmulti(p[1:9], N)     
+  p[1:9] ~ ddirich(alpha[])  
+}
+

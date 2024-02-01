@@ -1,0 +1,305 @@
+---
+title: "Lecture 6"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# R code for JAGS examples and plots from lecture 6
+
+```{r,message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(gridExtra)
+library(here)
+theme_set(theme_bw()) #Set black and white theme for ggplot
+```
+
+# Powerful owl binomial example  
+
+## Uniform prior on m
+
+```{r}
+write("model {
+m ~ dunif(0.02, 0.2)
+m.prior ~ dunif(0.02, 0.2)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+",file= here("Jags_mods","Owl.survival.txt"))
+
+owldat<-list(x=1,n=36)
+init1<-list(m=0.1)
+init2<-list(m=0.2)
+
+owl1<-jags(data=owldat,inits=list(init1,init2),
+  parameters.to.save=c("m","m.prior","x.prior.sim","x.sim"),
+  model.file=here("Jags_mods","Owl.survival.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(owl1$BUGSoutput$summary,3)
+ggs_density(filter(ggs(as.mcmc(owl1)),Parameter=="m"))
+```
+
+## Uniform prior on average age
+
+```{r}
+write("model
+{
+ave.age ~ dunif(5, 50)
+M.inst<- 1/ave.age
+m <- 1-exp(-M.inst)
+ave.age.prior~ dunif(5, 50)
+m.prior <- 1-exp(-1/ave.age.prior)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+",file=here("Jags_mods","Owl.M.txt"))
+init1<-list(ave.age=15)
+init2<-list(ave.age=20)
+
+owl2<-jags(owldat,list(init1,init2),
+  parameters.to.save=c("m","ave.age","ave.age.prior","m.prior","x.prior.sim","x.sim"),
+  model.file=here("Jags_mods","Owl.M.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(owl2$BUGSoutput$summary,3)
+ggs_density(filter(ggs(as.mcmc(owl2)),Parameter!="deviance"))
+```
+
+## Informative prior from beta distribution
+
+```{r}
+afunc<-function(mu,sig) mu*(mu*(1-mu)/sig^2-1)
+bfunc<-function(mu,sig) (1-mu)*(mu*(1-mu)/sig^2-1)
+a<-afunc(0.11,0.05)
+b<-bfunc(0.11,0.05)
+a;b
+ggplot(data.frame(x=c(0,1)),aes(x=x))+
+    stat_function(fun=dbeta,args=list(shape1=a,shape2=b),linewidth=2)+
+    ylab("Propability")+
+    ggtitle("Informative Prior")
+```
+
+Jags model with informative prior
+
+```{r}
+write("
+model 
+{
+m ~ dbeta(4.198, 33.96)
+m.prior ~ dbeta(4.198, 33.96)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+",file=here("Jags_mods","Owl.Info.txt"))
+
+init1<-list(m=0.1)
+init2<-list(m=0.2)
+
+owl3<-jags(owldat,list(init1,init2),
+  parameters.to.save=c("m","m.prior","x.prior.sim","x.sim"),
+  model.file=here("Jags_mods","Owl.Info.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(owl3$BUGSoutput$summary,3)
+owl3gg<-ggs(as.mcmc(owl3))
+ggs_density(filter(owl3gg,Parameter %in% c("m","m.prior")))
+```
+
+## To plot owls
+
+```{r}
+gg1<-ggs(as.mcmc(owl1))
+gg2<-ggs(as.mcmc(owl2))
+gg3<-ggs(as.mcmc(owl3))
+g1<-ggs_density(filter(gg1,Parameter=="m"))+ggtitle("Prior uniform on M") +xlim(c(0,0.25))
+g2<-ggs_density(filter(gg2,Parameter=="m"))+ggtitle("Prior uniform on mean age") +xlim(c(0,0.25))
+g3<-ggs_density(filter(gg3,Parameter=="m"))+ggtitle("Informative prior")+xlim(c(0,0.25))
+grid.arrange(g1,g2,g3)
+```
+
+Plot just the confidence intervals
+
+```{r}
+df1<-data.frame(rbind(owl1$BUGSoutput$summary["m",],owl2$BUGSoutput$summary["m",],owl3$BUGSoutput$summary["m",]))
+df1$Prior<-c("Uniform on M","Uniform on Age","Informative")
+ggplot(df1,aes(x=Prior,y=mean,ymin=X2.5.,ymax=X97.5.))+geom_point()+geom_errorbar(width=0.1)+ylab("Posterior mean and 95% CI")
+```
+
+# PMPD with owls. Change data to NA, and set DIC to false
+```{r}
+owlNodat<-list(x=NA,n=36)
+init1<-list(m=0.1)
+init2<-list(m=0.2)
+
+owl1pmpd<-jags(owlNodat,list(init1,init2),parameters.to.save=c("m","m.prior"),
+  model.file=here("Jags_mods","Owl.survival.txt"),
+  n.iter=100000,n.burnin=10000,n.thin=1,
+  n.chains=2,
+  DIC=FALSE)
+
+init1<-list(ave.age=15)
+init2<-list(ave.age=20)
+
+owl2pmpd<-jags(owlNodat,list(init1,init2),parameters.to.save=c("m","m.prior"),model.file=here("Jags_mods","Owl.M.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2,DIC=FALSE)
+
+init1<-list(m=0.1)
+init2<-list(m=0.2)
+
+owl3pmpd<-jags(owlNodat,list(init1,init2),parameters.to.save=c("m","m.prior"),
+  model.file=here("Jags_mods","Owl.Info.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2,DIC=FALSE)
+
+#ggmcmc doesn't work with no data, and only one parameter, so make plots with ggplot
+
+pmpd.df1<-bind_rows(list(`Uniform on M` =data.frame(owl1pmpd$BUGSoutput$sims.matrix),
+  `Uniform on ave age`=data.frame(owl2pmpd$BUGSoutput$sims.matrix),
+  `Informative`=data.frame(owl2pmpd$BUGSoutput$sims.matrix)),.id="Prior")
+ggplot(pmpd.df1) +
+  stat_density(aes(x=m,fill="Posterior"),alpha=0.5)+
+  stat_density(aes(x=m.prior,fill="Prior"),alpha=0.5)+
+  facet_wrap(Prior~.,ncol=1)+
+  ggtitle("Prior and posterior with no data")
+
+```
+
+## Posterior and prior predictive distributions
+
+```{r}
+sim.df1<-bind_rows(list(`Uniform on M` =data.frame(owl1$BUGSoutput$sims.matrix),
+  `Uniform on ave age`=data.frame(owl2$BUGSoutput$sims.matrix),
+  `Informative`=data.frame(owl2$BUGSoutput$sims.matrix)),.id="Prior")
+ggplot(sim.df1) +
+  geom_bar(aes(x=x.sim,fill="Posterior"),alpha=0.5)+
+  geom_bar(aes(x=x.prior.sim,fill="Prior"),alpha=0.5)+
+  facet_wrap(Prior~.,ncol=1)+
+  geom_vline(xintercept=1,color="red")+
+  ggtitle("Prior and posterior predictive distributions")+
+  xlab("Number of mortalities")
+
+
+```
+
+
+# Box 3.4 Poisson mean
+
+```{r}
+write("model{
+  for (i in 1:10)					# for each of the ten quadrats
+  {
+     y[i] ~ dpois(m)			# number of trees drawn from Poisson with mean m
+  }
+
+  m ~ dlnorm(0.0, 1.0E-6)  # uninformative prior for mean trees per quadrat
+}",here("Jags_mods","model3.4.txt"))
+
+Data<-list(y=c(6,0,1,2,1,7,1,5,2,0))
+
+InitialValues<-list(list(m=5),list(m=4))
+
+model3.4.res<-jags(data=Data,
+  inits = InitialValues,
+  parameters.to.save = c("m"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  n.thin = 1,
+  model.file=here("Jags_mods","model3.4.txt"))
+
+model3.4.res$BUGSoutput
+ggs3.4<-filter(ggs(as.mcmc(model3.4.res)),Parameter=="m")
+ggs_density(ggs3.4)
+
+#Fit compared to data
+ggplot(data.frame(Trees=Data$y),aes(x=Trees))+geom_histogram(bins=8,fill="lightblue",color="darkblue")+
+  geom_line(data=data.frame(Trees=0:7,Count=length(Data$y)*dpois(0:7,2.5)),aes(x=Trees,y=Count),lwd=2)
+```
+  
+
+
+
+# Negative binomial count data example 
+
+```{r}
+write("model{
+  for (i in 1:N)					{
+     y[i] ~ dnegbin(p,r)			
+  }
+  p~dunif(0,1)
+  r~dgamma(0.01,0.001)
+  m<-r*(1-p)/p
+  v<-r*(1-p)/(p*p)
+  dispersion<-1/p
+  step.prop<-step(dispersion-1)
+}
+",file=here("Jags_mods","NegBinDefault.txt"))
+
+dat1<-list(y=c(6,0,1,2,1,7,1,5,2,0),N=10)
+init1<-list(p=0.5,r=2)
+init2<-list(p=0.1,r=3)
+
+negbinres1<-jags(dat1,list(init1,init2),parameters.to.save=c("r","p","m","v",
+               "dispersion","step.prop"),model.file=here("Jags_mods","NegBinDefault.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(negbinres1$BUGSoutput$summary,2)
+negbindf<-ggs(as.mcmc(negbinres1))
+ggs_density(filter(negbindf,Parameter=="m"))
+```
+
+The mean alternate parameterization of the negative binomial
+
+```{r}
+?dnbinom
+write("model{
+  for (i in 1:N)	  {
+     y[i] ~ dnegbin(p,r)			
+  }
+  r ~dlnorm(0.0, 1.0E-6)
+  m~dlnorm(0.0, 1.0E-6)  
+  p<-r/(r+m)
+  v<-m+m*m/r
+  dispersion<-1/p
+  step.prop<-step(dispersion-1)
+}
+",file=here("Jags_mods","NegBinMean.txt"))
+
+dat1<-list(y=c(6,0,1,2,1,7,1,5,2,0),N=10)
+init1<-list(m=2,r=2)
+init2<-list(m=4,r=3)
+
+negbinres2<-jags(dat1,list(init1,init2),parameters.to.save=c("r","p","m","v",
+               "dispersion","step.prop"),model.file=here("Jags_mods","NegBinMean.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(negbinres2$BUGSoutput$summary,2)
+negbindfe<-ggs(as.mcmc(negbinres1))
+ggs_density(filter(negbindfe,Parameter=="m"))
+ggs_pairs(filter(negbindf,Parameter %in% c("r","p")),lower=list(continuous="density"))
+```
+
+# Koala multinomial example
+```{r}
+write("
+model
+{
+  Y[1:9] ~ dmulti(p[1:9], N)     
+  p[1:9] ~ ddirich(alpha[])  
+}
+",file=here("Jags_mods","koala.txt"))
+
+dat1<-list(N=397, Y=c(55, 132, 88, 48, 31, 26, 14, 3, 0), 
+  alpha=c(1, 1, 1, 1, 1, 1, 1, 1, 1))
+init1<-list(p=rep(1/9,9))
+
+koala1<-jags(dat1,list(init1,init1),parameters.to.save=c("p"),
+  model.file=here("Jags_mods","koala.txt"),
+              n.iter=100000,n.burnin=10000,n.thin=1,n.chains=2)
+round(koala1$BUGSoutput$summary,3)
+koala1$BUGSoutput$summary["p[1]",]
+?ggs
+koalaggs<-ggs(as.mcmc(koala1),family="p")
+ggs_caterpillar(koalaggs)
+ggs_grb(koalaggs)
+```
+

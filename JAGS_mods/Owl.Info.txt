@@ -1,0 +1,10 @@
+
+model 
+{
+m ~ dbeta(4.198, 33.96)
+m.prior ~ dbeta(4.198, 33.96)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+

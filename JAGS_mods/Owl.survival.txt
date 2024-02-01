@@ -1,0 +1,8 @@
+model {
+m ~ dunif(0.02, 0.2)
+m.prior ~ dunif(0.02, 0.2)
+x ~ dbin(m, n)
+x.prior.sim ~ dbin(m.prior,n)
+x.sim ~ dbin(m,n)
+}
+
