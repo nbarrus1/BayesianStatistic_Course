@@ -1,0 +1,8 @@
+model{
+  m ~ dnorm(35, 1.0E-06)	# prior for mean, with sd=1000, so precision=1/1000^2
+  prec <- 1 / ( stdev*stdev)	# precision of the data = 1/variance
+  for (i in 1:20)		# for each of the ten trees
+  {
+    Y[i] ~ dnorm(m, prec) # diameter drawn from normal (likelihood)
+  }
+}
