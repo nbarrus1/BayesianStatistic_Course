@@ -1,0 +1,112 @@
+---
+title: "Lecture 6. MCMC convergence"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE,echo=FALSE}
+library(R2jags)
+library(ggplot2)
+library(ggmcmc)
+library(here)
+theme_set(theme_bw())
+```
+
+## Negative binomial count data example 
+
+```{r}
+write("model{
+  for (i in 1:N)					{
+     y[i] ~ dnegbin(p,r)			
+  }
+  p~dunif(0,1)
+  r~dgamma(0.01,0.001)
+  m<-r*(1-p)/p
+  v<-r*(1-p)/(p*p)
+  dispersion<-1/p
+  step.prop<-step(dispersion-1)
+}
+",file=here("JAGS_mods","Nbinomial.default.txt"))
+
+dat1<-list(y=c(6,0,1,2,1,7,1,5,2,0),N=10)
+init1<-list(p=0.5,r=2)
+init2<-list(p=0.1,r=3)
+
+negbinres1<-jags(dat1,list(init1,init2),parameters.to.save=c("r","p","m","v",
+               "dispersion"),model.file=here("JAGS_mods","Nbinomial.default.txt"),
+              n.iter=1000,n.burnin=0,n.thin=1,n.chains=2)
+#See summary statistics
+round(negbinres1$BUGSoutput$summary,2)
+dim(negbinres1$BUGSoutput$sims.matrix)
+dim(negbinres1$BUGSoutput$sims.array)
+# Make ggs objects
+gg1<-ggs(as.mcmc(negbinres1))   #Convert to GGS object (dataframe for ggplot)
+head(gg1)
+gg1pr<-filter(gg1,Parameter %in% c("p","r"))  #Filter out parameters I don't want to plot
+```
+
+Look at correlation among parameters
+
+```{r}
+ggs_pairs(gg1pr)  # Joint and marginal densities, with joint shown as a the MCMC draws
+ggs_pairs(gg1pr, lower = list(continuous = "density"))  #Same with joint as a contour plot
+ggs_crosscorrelation(gg1pr)  #Correlation between parameters
+```
+
+Traceplots
+
+```{r}
+ggs_traceplot(gg1pr)  #Traceplot
+```
+
+Diagnostics and summary statistics for just p and r
+```{r}
+ggs_density(gg1pr)  #Marginal posterior
+ggs_histogram(gg1pr) #Posterior histogram
+ggs_running(gg1pr)  #Running mean
+ggs_compare_partial(gg1pr)  #Compares end of chain (partial) to whole chain
+ggs_autocorrelation(gg1pr)  #Autocorrelation
+```
+
+Diagnostics that require multiple chains
+
+```{r}
+ggs_grb(gg1pr) #Gelman Rubin across chain
+ggs_Rhat(gg1pr) # Final value of Gelman Rubin
+ggs_geweke(gg1pr) # Geweke diagnositc (points should be in grey zone)
+```
+
+Get large number of plots in one .pdf
+```{r}
+ggmcmc(gg1pr, file=here("out","lecture7_negbin-diag.pdf"))
+```
+
+Adjust format by using ggplot functions
+```{r}
+ggs_autocorrelation(gg1pr)+
+  ggtitle("Negative binomial")+
+  scale_fill_manual(values=c("red","blue"))+
+  scale_color_manual(values=c("red","blue"))+
+  labs(fill="Chain",color="Chain")
+```
+
+Make your own plots
+
+```{r}
+head(gg1pr)
+ggplot(gg1pr,aes(x=value,color=Parameter,fill=Parameter))+geom_density(alpha=0.5)
+```
+
+Checking n.eff for all parameters
+
+```{r}
+summaryNegBin<-negbinres1$BUGSoutput$summary
+summaryNegBin
+summaryNegBin[summaryNegBin[,"n.eff"]<400,]
+#or
+summaryNegBin<-data.frame(negbinres1$BUGSoutput$summary)
+filter(summaryNegBin,n.eff<400 | Rhat>1.01)
+```
+
+

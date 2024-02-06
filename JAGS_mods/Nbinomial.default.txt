@@ -1,0 +1,12 @@
+model{
+  for (i in 1:N)					{
+     y[i] ~ dnegbin(p,r)			
+  }
+  p~dunif(0,1)
+  r~dgamma(0.01,0.001)
+  m<-r*(1-p)/p
+  v<-r*(1-p)/(p*p)
+  dispersion<-1/p
+  step.prop<-step(dispersion-1)
+}
+
