@@ -1,0 +1,16 @@
+model
+{
+  mean ~ dnorm(100, 1E-6)  #uninformative prior for mean	
+
+  #uniformative prior for variance
+  prec ~ dgamma(0.01,0.001)   
+  Var <- 1/prec
+  sd <- sqrt(Var)
+
+  #likelihood
+  for (i in 1:10)  		 	
+  {
+    Y[i] ~ dnorm(mean, prec)
+  }
+}
+

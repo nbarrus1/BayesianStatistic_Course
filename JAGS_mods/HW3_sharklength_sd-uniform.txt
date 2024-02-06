@@ -1,0 +1,16 @@
+model
+{
+  mean ~ dnorm(100, 1E-6)  #prior for mean	
+
+  #Prior on sd
+  sd~dunif(0,400)   
+  Var <- sd *sd
+  prec <- 1/Var
+  
+  #likelihood
+  for (i in 1:10)  		 	
+  {
+    Y[i] ~ dnorm(mean, prec)
+  }
+}
+
