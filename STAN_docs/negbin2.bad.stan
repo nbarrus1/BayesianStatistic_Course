@@ -7,7 +7,7 @@ parameters {
   real<lower=0> r;
 }
 transformed parameters {
-  real<lower=0,upper=1> m;
+  real<lower=0> m;
   m = r *(1-p)/p;
 }
 model{

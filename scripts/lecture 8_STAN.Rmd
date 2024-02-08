@@ -49,6 +49,9 @@ stanNB2bad<-stan(file=here("STAN_docs","NegBin2.bad.stan"),
   data=PoissonDat)
 print(stanNB2bad)
 
+####please note that i fixed the upper bound on m in the stan code so
+###the model actually runs correctly
+
 ```
 Convergence diagnostics
 
