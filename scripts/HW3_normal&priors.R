@@ -82,6 +82,8 @@ write("model
   prec ~ dgamma(0.01,0.001)   
   Var <- 1/prec
   sd <- sqrt(Var)
+  sd.diff <- sd-250
+  sd.diff.test <- step(sd.diff)
 
   #likelihood
   for (i in 1:10)  		 	
@@ -96,7 +98,7 @@ write("model
 #If you initialize, must be on estimated parameter
 model_HW3_sharklength_gam<-jags(data=shark.length,
                       inits=list(list(prec=1),list(prec=2)),
-                      parameters.to.save = c("mean","Var","prec","sd"),
+                      parameters.to.save = c("mean","Var","prec","sd","sd.diff.test"),
                       n.chains = 2,
                       n.burnin = 10000,
                       n.iter = 200000,
@@ -104,6 +106,7 @@ model_HW3_sharklength_gam<-jags(data=shark.length,
                       model.file = here("JAGS_mods","HW3_sharklength_sd-gamma.txt"))
 
 print(model_HW3_sharklength_gam)
+ggs_density(ggs(as.mcmc(model_HW3_sharklength_gam)))
 
 
 #B) To make sure you understand what the model is estimating, fill in the 
@@ -136,12 +139,15 @@ print(model_HW3_sharklength_gam)
 
 write("model
 {
-  mean ~ dnorm(100, 1E-6)  #prior for mean	
+  mean ~ dnorm(100, 1E-6)  #prior for mean
+  
 
   #Prior on sd
   sd~dunif(0,400)   
   Var <- sd *sd
   prec <- 1/Var
+  sd.diff <- sd-250
+  sd.diff.test <- step(sd.diff)
   
   #likelihood
   for (i in 1:10)  		 	
@@ -154,7 +160,7 @@ write("model
 #If you initialize, must be on estimated parameter
 model_HW3_sharklength_unif<-jags(data=shark.length,
                                  inits=list(list(sd=2),list(sd=1)),  #for sd as the estimated parameter
-                                 parameters.to.save = c("mean","Var","prec","sd"),
+                                 parameters.to.save = c("mean","Var","prec","sd","sd.diff.test"),
                                  n.chains = 2,
                                  n.burnin = 10000,
                                  n.iter = 200000,
@@ -162,6 +168,7 @@ model_HW3_sharklength_unif<-jags(data=shark.length,
                                  model.file = here("JAGS_mods","HW3_sharklength_sd-uniform.txt"))
 
 print(model_HW3_sharklength_unif)
+ggs_density(ggs(as.mcmc(model_HW3_sharklength_unif)))
 
 #D)  Repeat part a using an exponential prior for the standard deviation.  Show 
 #the posterior marginal densities of each parameter, as well as the summary 
@@ -178,6 +185,9 @@ write("model
   sd~dexp(0.1) 
   Var <- sd *sd
   prec <- 1/Var
+  sd.diff <- sd-250
+  sd.diff.test <- step(sd.diff)
+
   
   #likelihood
   for (i in 1:10)  		 	
@@ -190,7 +200,7 @@ write("model
 #If you initialize, must be on estimated parameter
 model_HW3_sharklength_exp<-jags(data=shark.length,
                                  inits=list(list(sd=2),list(sd=1)),  #for sd as the estimated parameter
-                                 parameters.to.save = c("mean","Var","prec","sd"),
+                                 parameters.to.save = c("mean","Var","prec","sd","sd.diff.test"),
                                  n.chains = 2,
                                  n.burnin = 10000,
                                  n.iter = 200000,
@@ -198,6 +208,7 @@ model_HW3_sharklength_exp<-jags(data=shark.length,
                                  model.file = here("JAGS_mods","HW3_sharklength_sd-exp.txt"))
 
 print(model_HW3_sharklength_exp)
+ggs_density(ggs(as.mcmc(model_HW3_sharklength_unif)))
 
 
 #E)How do the results differ between the models with different priors in parts 
@@ -212,6 +223,9 @@ round(model_HW3_sharklength_exp$BUGSoutput$summary,4)
 #want to know if their sharks are more variable in size than those from a 
 #related population). Do you get similar answers from each parameterization?
 
+round(model_HW3_sharklength_gam$BUGSoutput$summary[5:6,],4)
+round(model_HW3_sharklength_unif$BUGSoutput$summary[5:6,],4)
+round(model_HW3_sharklength_exp$BUGSoutput$summary[5:6,],4)
 
 
 #-------------------
@@ -230,16 +244,75 @@ round(model_HW3_sharklength_exp$BUGSoutput$summary,4)
 #streams with kingfishers. Show the summary statistics and posterior density 
 #of the fraction. 
 
+write("model{
+  r ~ dbeta(1, 1)	# uninformative prior for propotion present
+  r.prior ~ dbeta(1, 1)
+  x ~ dbin(r, n)	# data sampled binomially with total samples = 19, success = 6
+  x.prior.sim ~ dbin(r.prior,n)
+  x.sim ~ dbin(r,n)
+  }
+",file= here("JAGS_mods","HW3_kingfish_beta-unifor.txt"))
 
+kf.dat.uninfor <- list(x = 6, n = 19)
+
+presMod_HW2_2a <- jags(data=kf.dat.uninfor,
+     parameters.to.save=c("r","r.prior","x.prior.sim","x.sim"),
+     model.file = here("JAGS_mods","HW3_kingfish_beta-unifor.txt"),
+     n.iter=100000,
+     n.burnin=10000,
+     n.thin=1)
+
+print(presMod_HW2_2a)
+ggsBinom_2a<-ggs(as.mcmc(presMod_HW2_2a)) %>% filter(Parameter=="r")
+ggs_traceplot(ggsBinom_2a)
+ggs_density(ggsBinom_2a)
 
 #B) Using an informative beta prior based on the previous study, estimate the 
 #fraction of streams with kingfishers. What are your values for a and b? Show 
 #the summary statistics and posterior of the fraction. 
 
+mu = 0.25
+cv = 0.2
+
+#cv = sd/mu
+#sd = CV*mu
+sd = cv*mu
+
+afunc<-function(mu,sig) mu*(mu*(1-mu)/sig^2-1)
+bfunc<-function(mu,sig) (1-mu)*(mu*(1-mu)/sig^2-1)
+
+a <- afunc(mu,sd)
+b <- bfunc(mu,sd)
+
+
+write("model{
+  r ~ dbeta(a, b)	# informative prior for propotion present
+  r.prior ~ dbeta(a, b)
+  x ~ dbin(r, n)	# data sampled binomially with total samples = 19, success = 6
+  x.prior.sim ~ dbin(r.prior,n)
+  x.sim~dbin(r,n)
+  }
+",file= here("JAGS_mods","HW3_kingfish_beta-infor.txt"))
+
+kf.dat.infor <- list(x = 6,n = 19,a = a, b = b)
+
+presMod_HW2_2b <- jags(data=kf.dat.infor,
+                       parameters.to.save=c("r","r.prior","x.prior.sim","x.sim"),
+                       model.file = here("JAGS_mods","HW3_kingfish_beta-infor.txt"),
+                       n.iter=100000,
+                       n.burnin=10000,
+                       n.thin=1)
+
+print(presMod_HW2_2b)
+ggsBinom_2b<-ggs(as.mcmc(presMod_HW2_2b)) %>% filter(Parameter=="r")
+ggs_traceplot(ggsBinom_2b)
+ggs_density(ggsBinom_2b)
+
 
 #C) How do your results differ between a and b?
 
-
+print(presMod_HW2_2a)
+print(presMod_HW2_2b)
 
 #-----------------------------
 ###Problem 3####
@@ -251,11 +324,44 @@ round(model_HW3_sharklength_exp$BUGSoutput$summary,4)
 #parameter and plot both the prior and the posterior using ggs_density.  How 
 #did the data update the priors?
 
+ggsBinom_2a<-ggs(as.mcmc(presMod_HW2_2a)) %>% filter(Parameter=="r"|Parameter == "r.prior")
+ggs_density(ggsBinom_2a)
+
+
+ggsBinom_2b<-ggs(as.mcmc(presMod_HW2_2b)) %>% filter(Parameter=="r"|Parameter == "r.prior")
+ggs_density(ggsBinom_2b)
+
 
 #B) Now do a post model pre data run, by replacing the values of the number of 
 #streams with kingfishers with NA. and re-running the model. Look at the 
 #posterior summary. How do the results differ from what you got in part b and 
 #from each other?
+
+kf.pred.uninfor <- list(x = NA, n = 19)
+
+
+
+presMod_HW2_2a_pred <- jags(data=kf.pred.uninfor,
+                       parameters.to.save=c("r","r.prior","x", "x.sim","x.prior.sim"),
+                       model.file = here("JAGS_mods","HW3_kingfish_beta-unifor.txt"),
+                       n.iter=100000,
+                       n.burnin=10000,
+                       n.thin=1,DIC = FALSE)
+
+print(presMod_HW2_2a_pred)
+
+kf.pred.infor <- list(x = NA,n = 19,a = a, b = b)
+
+
+
+presMod_HW2_2b_pred <- jags(data=kf.pred.infor,inits =list(init1,init2,init3),
+                       parameters.to.save=c("r","r.prior","x","x.sim","x.prior.sim"),
+                       model.file = here("JAGS_mods","HW3_kingfish_beta-infor.txt"),
+                       n.iter=100000,
+                       n.burnin=10000,
+                       n.thin=1,DIC = FALSE)
+
+print(presMod_HW2_2b_pred)
 
 
 #C) Now look at the posterior and prior predictive distributions. Add lines to the 
@@ -263,3 +369,14 @@ round(model_HW3_sharklength_exp$BUGSoutput$summary,4)
 #model with data and plot the distributions of the simulated data under both 
 #the prior and the posterior for both models. Does the binomial distribution 
 #seem appropriate for this data?
+
+sim.df <-bind_rows(list(`Uninformative` = data.frame(presMod_HW2_2a_pred$BUGSoutput$sims.matrix),
+                        `Informative` = data.frame(presMod_HW2_2b_pred$BUGSoutput$sims.matrix)),
+                        .id = "Prior")
+
+ggplot(sim.df)+
+  geom_bar(aes(x = x.sim, fill = "Posterior"), alpha = 0.5)+
+  geom_bar(aes(x=x.prior.sim,fill="Prior"),alpha=0.5)+
+  facet_wrap(Prior~.,ncol=1)+
+  scale_fill_manual(values = c("Posterior" = "blue","Prior" = "red"))+
+  ggtitle("Prior and posterior predictive distributions")

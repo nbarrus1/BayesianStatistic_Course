@@ -6,6 +6,9 @@ model
   sd~dexp(0.1) 
   Var <- sd *sd
   prec <- 1/Var
+  sd.diff <- sd-250
+  sd.diff.test <- step(sd.diff)
+
   
   #likelihood
   for (i in 1:10)  		 	

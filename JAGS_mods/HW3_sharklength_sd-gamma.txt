@@ -6,6 +6,8 @@ model
   prec ~ dgamma(0.01,0.001)   
   Var <- 1/prec
   sd <- sqrt(Var)
+  sd.diff <- sd-250
+  sd.diff.test <- step(sd.diff)
 
   #likelihood
   for (i in 1:10)  		 	

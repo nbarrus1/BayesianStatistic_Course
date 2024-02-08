@@ -1,0 +1,8 @@
+model{
+  r ~ dbeta(a, b)	# informative prior for propotion present
+  r.prior ~ dbeta(a, b)
+  x ~ dbin(r, n)	# data sampled binomially with total samples = 19, success = 6
+  x.prior.sim ~ dbin(r.prior,n)
+  x.sim~dbin(r,n)
+  }
+
