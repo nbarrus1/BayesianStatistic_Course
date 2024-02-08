@@ -1,0 +1,96 @@
+---
+title: "Lecture 8. STAN"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Stan and the Hamiltonian
+
+```{r,message=FALSE,error=FALSE}
+library(tidyverse)
+library(ggmcmc)
+library(rstan)
+library(here)
+theme_set(theme_bw())
+```
+
+```{r}
+Data<- list(Y=c(42, 43, 58, 70, 47, 51, 85, 63, 58, 46),N=10) 
+
+#?stan
+stanNorm1<-stan(file=here("STAN_docs", "stannormal1.stan"),
+  data=Data)
+print(stanNorm1)
+summary(stanNorm1)
+ggsnorm1<-ggs(stanNorm1)
+ggs_density(ggsnorm1)
+ggs_pairs(ggsnorm1)
+norm1Draws<-as.matrix(stanNorm1, pars = c("mu", "sigma"))
+```
+
+Convergence diagnostics
+
+```{r}
+stan_par(stanNorm1,par="sigma")
+stan_diag(stanNorm1)
+stan_diag(stanNorm1,information="divergence")
+stan_mcse(stanNorm1)
+stan_ess(stanNorm1)
+```
+
+## Example with many convergence problems
+
+
+```{r}
+PoissonDat<-list(y=c(6,0,1,2,1,7,1,5,2,0),N=10)
+
+stanNB2bad<-stan(file=here("STAN_docs","NegBin2.bad.stan"),
+  data=PoissonDat)
+print(stanNB2bad)
+
+```
+Convergence diagnostics
+
+```{r}
+ggsNB2bad<-ggs(stanNB2bad)
+ggs_density(ggsNB2bad)
+ggs_pairs(filter(ggsNB2bad,Parameter %in% c("p","r")))
+ggs_autocorrelation(filter(ggsNB2bad,Parameter %in% c("p","r")))
+ggs_traceplot(filter(ggsNB2bad,Parameter %in% c("p","r")))
+stan_trace(stanNB2bad)
+stan_par(stanNB2bad,par="p")
+stan_par(stanNB2bad,par="r")
+stan_diag(stanNB2bad)
+stan_diag(stanNB2bad,information="divergence")
+```
+
+## Negative binomial 2 with improvements
+
+1. Use the mean parameterization
+
+2. Bound the parameters
+
+3. Use less informative priors
+
+```{r}
+stanNB2<-stan(file=here("STAN_docs","NegBin2.stan"),
+  data=PoissonDat)
+print(stanNB2)
+```
+
+Diagnostics
+
+```{r}
+ggsNB2<-ggs(stanNB2)
+ggs_density(ggsNB2)
+ggs_pairs(filter(ggsNB2,Parameter %in% c("m","r")))
+ggs_autocorrelation(filter(ggsNB2,Parameter %in% c("m","r")))
+ggs_traceplot(filter(ggsNB2,Parameter %in% c("m","r")))
+stan_trace(stanNB2,par=c("m","p"))
+stan_par(stanNB2,par="m")
+stan_par(stanNB2,par="r")
+stan_diag(stanNB2)
+stan_diag(stanNB2,information="divergence")
+
+```
