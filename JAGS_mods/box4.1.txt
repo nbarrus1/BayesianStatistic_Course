@@ -1,0 +1,11 @@
+model
+{
+  lambda ~ dgamma(0.001, 0.001)  # broad prior for mean productivity
+   for (i in 1:35)  # for each of the 35 pairs
+  {
+    Offspring[i] ~ dpois(lambda)  # productivity drawn from a Poisson dist'n
+    LL[i]<--lambda+Offspring[i]*log(lambda)-logfact(Offspring[i])
+  }
+  dev<- -2*sum(LL[])
+}
+

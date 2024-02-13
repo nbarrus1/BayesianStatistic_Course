@@ -1,0 +1,169 @@
+---
+title: "9. Model selection"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Lecture 9 model selection
+
+```{r,message=FALSE}
+library(R2jags)
+library(ggplot2)
+library(ggmcmc)
+library(loo)
+library(rstan)
+library(here)
+theme_set(theme_bw())
+```
+
+#Poisson 1 parameter
+
+```{r}
+write("model
+{
+  lambda ~ dgamma(0.001, 0.001)  # broad prior for mean productivity
+   for (i in 1:35)  # for each of the 35 pairs
+  {
+    Offspring[i] ~ dpois(lambda)  # productivity drawn from a Poisson dist'n
+    LL[i]<--lambda+Offspring[i]*log(lambda)-logfact(Offspring[i])
+  }
+  dev<- -2*sum(LL[])
+}
+",file=here("JAGS_mods","box4.1.txt"))
+
+data1<-list(Offspring=c(0,0,0,0,0,1,1,1,1,1,1,1,1,1, 2,2,2,2,2,2,2,2, 3,3, 5, 0,0,0,0,0, 1,1,1,1, 2))
+
+resfile1<-jags(data1,
+               parameters.to.save = c("dev","lambda"),
+               model.file = here("JAGS_mods","box4.1.txt"),
+               n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+
+round(resfile1$BUGSoutput$summary,2)
+gg1<-ggs(as.mcmc(resfile1))
+ggs_density(gg1)
+ggs_pairs(filter(gg1,Parameter !="dev"))
+resfile1$BUGSoutput$DIC
+resfile1$BUGSoutput$pD
+```
+
+
+# More complex Poisson (2 parameters)
+
+```{r}
+write("model{
+  lambda[1] ~ dgamma(0.001, 0.001) # mean if split
+  lambda[2] ~ dgamma(0.001, 0.001) # mean if intact
+  for (i in 1:35)  # for each of the 35 pairs
+  {
+    Offspring[i] ~ dpois(lambda[Intact[i] + 1])  
+    LL[i]<--lambda[Intact[i] + 1]+Offspring[i]*log(lambda[Intact[i] + 1])-logfact(Offspring[i])
+  }
+}
+",file=here("JAGS_mods", "box4.4.txt"))
+
+data4<-list(Offspring=c(0,0,0,0,0,1,1,1,1,1,1,1,1,1, 2,2,2,2,2,2,2,2, 3,3, 5, 0,0,0,0,0, 1,1,1,1, 2), Intact=c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0))
+
+resfile4<-jags(data4,
+               parameters.to.save = c("lambda"),
+               model.file = here("JAGS_mods", "box4.4.txt"),
+               n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+
+round(resfile4$BUGSoutput$summary,2)
+mcmc4<-as.mcmc(resfile4)
+gg4<-ggs(mcmc4)
+ggs_density(gg4)
+resfile4$BUGSoutput$DIC
+resfile4$BUGSoutput$pD
+```
+
+## Make DIC table
+
+```{r}
+DICtab<-data.frame(Model=c("Poison 1", "Poisson2"),
+     DIC=c(resfile1$BUGSoutput$DIC,resfile4$BUGSoutput$DIC),
+    pD=c(resfile1$BUGSoutput$pD,resfile4$BUGSoutput$pD)) %>%
+  mutate(deltaDIC=DIC-min(DIC),
+         weight=exp(-2*deltaDIC)/sum(exp(-2*deltaDIC)))
+DICtab %>% rmarkdown::paged_table(options(digits=3))
+```
+
+## Calculate WAIC for poisson models
+
+```{r}
+resfile1<-jags(data1,
+               parameters.to.save = c("lambda","LL"),
+                model.file = here("JAGS_mods","box4.1.txt"),
+               n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+resfile4<-jags(data4,
+               parameters.to.save = c("lambda","LL"),
+               model.file = here("JAGS_mods", "box4.4.txt"),
+               n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+
+LL1<-resfile1$BUGSoutput$sims.matrix[,paste0("LL[",1:35,"]")]
+dim(LL1)
+waic(LL1)
+LL4<-resfile4$BUGSoutput$sims.matrix[,paste0("LL[",1:35,"]")]
+waic2<-waic(LL4)
+waic(LL1);waic(LL4)
+```
+
+## Make WAIC table
+
+```{r}
+waic1<-waic(LL1)
+waic4<-waic(LL4)
+waictab<-data.frame(Model=c("Poisson1","Poisson2"))
+waictab$WAIC<-c(waic1$estimates["waic","Estimate"],
+  waic2$estimates["waic","Estimate"])
+waictab$pWAIC<-c(waic1$estimates["p_waic","Estimate"],
+  waic2$estimates["p_waic","Estimate"])
+waictab$deltaWAIC<-waictab$WAIC-min(waictab$WAIC)
+waictab
+#Calculate WAIC model weights
+waictab$exp<-exp(-waictab$deltaWAIC/2)
+waictab$Weight<-waictab$exp/sum(waictab$exp)
+waictab[,2:6]<-round(waictab[,2:6],2)
+waictab
+```
+
+# Model averaging of lambda
+
+```{r}
+lambdaTab<-data.frame(Intact=0:1,
+                    Lambda1=rep(resfile1$BUGSoutput$summary["lambda","mean"],2),
+                    Lambda2=c(resfile4$BUGSoutput$summary["lambda[1]","mean"],
+                              resfile4$BUGSoutput$summary["lambda[2]","mean"]),
+                      Prob1=rep(waictab$Weight[1],2),
+                      Prob2=rep(waictab$Weight[2],2))
+lambdaTab$AveLambda<-lambdaTab$Lambda1*lambdaTab$Prob1+
+  lambdaTab$Lambda2*lambdaTab$Prob2
+lambdaTab
+```
+# STAN version
+
+```{r}
+stan1<-stan(file=here("STAN_docs", "box4.1.stan"),
+  data=data1
+  )
+summary(stan1,par="lambda")
+ll1stan<-extract_log_lik(stan1,parameter_name = "LL")
+waic(ll1stan)
+data4$Intact<-data4$Intact+1
+stan4<-stan(file=here("STAN_docs", "box4.4.stan"),
+  data=data4
+  )
+summary(stan4,par="lambda")
+ll4stan<-extract_log_lik(stan4,parameter_name = "LL")
+waic(ll1stan)
+waic(ll4stan)
+
+```
+
+# Leave one out cross validation
+
+```{r}
+loo(ll1stan)
+loo(ll4stan)
+
+```

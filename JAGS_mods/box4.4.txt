@@ -1,0 +1,10 @@
+model{
+  lambda[1] ~ dgamma(0.001, 0.001) # mean if split
+  lambda[2] ~ dgamma(0.001, 0.001) # mean if intact
+  for (i in 1:35)  # for each of the 35 pairs
+  {
+    Offspring[i] ~ dpois(lambda[Intact[i] + 1])  
+    LL[i]<--lambda[Intact[i] + 1]+Offspring[i]*log(lambda[Intact[i] + 1])-logfact(Offspring[i])
+  }
+}
+
