@@ -1,0 +1,217 @@
+---
+title: "HW4_Convergence&STAN"
+author: "N. Barrus"
+date: "2024-02-14"
+output: html_document
+---
+
+## Purpose:
+
+The purpose of this markdown document is to work through Homework 4 in Dr. Babcock's Bayesian Statistics Course at the University of Miami. Homework 4 deals with assessing covergence and introducing the class to STAN.
+
+Please note, that STAN package compiles the code in C++ before using it in R. This means the first time the code runs it is a bit slower, but subsequent attempts are much quicker. Stan uses a Hamiltonian MCMC which greatly speeds up convergence, but must be used with numerical data.
+
+## General Start to Code
+
+```{r,eval=FALSE}
+
+rm(list = ls())
+
+######github#####
+#note, only needed after 90 days from 1/16/2024
+
+#  usethis::create_github_token()  
+#  gitcreds::gitcreds_set()
+
+#####check for r updates#####
+#note, updateing may take some time so plan accordingly
+
+#require(installr)
+
+#check.for.updates.R()
+
+#updateR() #only if needed
+
+#######check for package updates#####
+#note, updateing may take some time so plan accordingly
+
+#old.packages()
+
+# update.packages() #make the decision to the update the packages
+
+```
+
+## Load packages
+
+```{r, results='hide'}
+
+library(tidyverse)
+library(R2jags)
+library(rstan)
+library(ggmcmc)
+library(here)
+theme_set(theme_bw(base_size=15))
+
+```
+
+## Data
+
+The data consists of counts of the number of trees in 30 equal sized quadrats.
+
+```{r}
+Y <- c(11, 3, 7, 6, 2, 36, 14, 9, 2, 10, 2, 7, 3, 1, 0, 0, 0, 1,
+ 5, 0, 2, 11, 5, 3, 0, 3, 3, 27, 0, 11)
+
+tree.counts <- list(Y = Y,
+                   N = length(Y))
+
+tree.counts
+
+```
+
+## Problem 1:
+
+#### Fit this data in JAGS, using the Poisson distribution. Call the parameter lambda, where lambda=mean=variance, and use the lognormal distribution for the prior. Print the parameter summaries, and show the traceplot and density. Is the model converged?
+
+*Write and Run The Jags model*
+
+```{r, results='hide'}
+
+#write the model
+
+write(("model{
+       
+#parameter priors
+
+lamda ~ dlnorm(0.0, 1.0E-6)
+
+#likelihood
+
+for(i in 1:N) {
+Y[i] ~ dpois(lamda)
+}
+       
+       }"), here("JAGS_mods","HW3-Q1-Poisson.txt"))
+
+
+#run the model
+
+treemod.HW4.Q1.poiss <- jags(data = tree.counts,
+  parameters.to.save = c("lamda"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  model.file = here("JAGS_mods","HW3-Q1-Poisson.txt")
+)
+
+
+```
+
+
+*Convergence Diagnostics*
+
+```{r}
+
+treemod.HW4.Q1.poiss$BUGSoutput
+ggs.treemod.HW4.Q1.poiss <- ggs(as.mcmc(treemod.HW4.Q1.poiss))
+ggs_density(ggs.treemod.HW4.Q1.poiss)
+ggs_traceplot(ggs.treemod.HW4.Q1.poiss)
+
+```
+
+The model has adequately converged, because the model neff is greater than 400, 
+the rhats are close to 1, the densities are relatively smooth, there appears to be little autocorrelation in the traceplots, and the plots show little difference 
+between chains.
+
+## Problem 2:
+
+#### Fit this data in STAN, using the Poisson distribution. The likelihood for a Poisson distribution in STAN is called poisson, with the same parameter as in JAGS. Print the parameter summaries, and show the traceplot and density. Is the model converged? Are the results similar to the JAGS results?
+
+*run the model the STAN model*
+```{r}
+
+treemod.HW4.Q2.poiss <- stan(file = here("STAN_docs","HW4_Q2_poisson.stan"),
+                             data = tree.counts)
+
+```
+
+*Convergence Diagnostics*
+
+```{r}
+print(treemod.HW4.Q2.poiss)
+ggs.treemod.HW4.Q2.poiss <- ggs(treemod.HW4.Q2.poiss)
+ggs_density(ggs.treemod.HW4.Q2.poiss)
+ggs_traceplot(ggs.treemod.HW4.Q2.poiss)
+
+```
+   
+The model has adequately converged, because the model neff is greater than 400, 
+the rhats are close to 1, the densities are relatively smooth, there appears to be little autocorrelation in the traceplots, and the plots show little difference between chains.  
+
+The JAGS and the STAN methods showed similar results.
+
+
+## Problem 3:
+
+#### Fit the data using the original probability (p), number of successes (r) parameterization of the negative binomial using JAGS. Use a uniform prior for p and a lognormal for r. Calculate the mean and variance as estimated parameters. Print the summary statistics, density plot, traceplot, pairs plot for p and r, and autocorrelation plot. What convergence issues can you diagnose? Is the variance larger than the mean?
+
+*Write and Run The Jags model*
+
+```{r}
+
+write(("model{
+       
+#parameter priors
+
+p ~ dunif(0,1) #prior for propotion
+r ~ dlnorm(0.0, 1.0E-6) #prior for number of successes
+
+#likelihood
+
+for(i in 1:N) {
+Y[i] ~ dnegbin(p,r)
+}
+       
+       }"), here("JAGS_mods","HW3-Q3-NegBinom.txt"))
+
+
+treemod.HW4.Q3.negbin <- jags(data = tree.counts,
+  parameters.to.save = c("p","r"),
+  n.chains = 2,
+  n.burnin = 1000,
+  n.iter = 20000,
+  model.file = here("JAGS_mods","HW3-Q3-NegBinom.txt"))
+
+
+```
+*Convergence Diagnostics*
+
+```{r}
+
+treemod.HW4.Q3.negbin$BUGSoutput
+ggs.treemod.HW4.Q3.negbin <- ggs(as.mcmc(treemod.HW4.Q3.negbin)) |> 
+  filter(Parameter == "p"| Parameter == "r")
+ggs_density(ggs.treemod.HW4.Q3.negbin)
+ggs_traceplot(ggs.treemod.HW4.Q3.negbin)
+ggs_pairs(ggs.treemod.HW4.Q3.negbin)
+ggs_autocorrelation(ggs.treemod.HW4.Q3.negbin)
+
+```
+
+
+## Problem 4:
+
+#### Fit the same model to the data using STAN, with the same parameterization, and using the neg_binomial_2 for the likelihood. For the r parameter, don’t give it an upper limit\> ie define it as:real\<lower=0\> r; Estimate the variance and mean as either transformed parameters or estimated quantities. Look at the same convergence diagnostics, plus stan_diag for divergences. How does the convergence compare to the previous model in JAGS?
+
+```{r}
+
+```
+
+## Problem 5:
+
+#### Fit the data using the mean (m) as a parameter rather than probability (p), still using r as a parameter. Calculated mean and variance as estimated quantities. Give r an upper bound of 10 and use less informative priors. Estimate the variance as an estimated quantity. Look at the same convergence diagnostics. How does the convergence compare to the previous model in STAN? Do the mean and variance look similar to parts 3 and 4?
+
+```{r eval=FALSE, include=FALSE}
+rmarkdown::render(input = here("scripts","HW4_convergenceSTAN.Rmd"),
+                  output_file = here("renders","HW4_convergenceSTAN.html"))
+```

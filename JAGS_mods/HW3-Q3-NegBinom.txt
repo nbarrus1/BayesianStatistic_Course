@@ -1,0 +1,14 @@
+model{
+       
+#parameter priors
+
+p ~ dunif(0,1) #prior for propotion
+r ~ dlnorm(0.0, 1.0E-6) #prior for number of successes
+
+#likelihood
+
+for(i in 1:N) {
+Y[i] ~ dnegbin(p,r)
+}
+       
+       }

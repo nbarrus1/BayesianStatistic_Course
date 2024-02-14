@@ -1,0 +1,13 @@
+model{
+       
+#parameter priors
+
+lamda ~ dlnorm(0.0, 1.0E-6)
+
+#likelihood
+
+for(i in 1:N) {
+Y[i] ~ dpois(lamda)
+}
+       
+       }
