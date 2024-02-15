@@ -10,5 +10,8 @@ r ~ dlnorm(0.0, 1.0E-6) #prior for number of successes
 for(i in 1:N) {
 Y[i] ~ dnegbin(p,r)
 }
-       
-       }
+
+#estimate parameters
+m <- r *(1-p)/p
+v <- m+m*m/r
+ }

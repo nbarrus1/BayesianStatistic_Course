@@ -13,7 +13,7 @@ Please note, that STAN package compiles the code in C++ before using it in R. Th
 
 ## General Start to Code
 
-```{r,eval=FALSE}
+```{r}
 
 rm(list = ls())
 
@@ -128,7 +128,7 @@ between chains.
 #### Fit this data in STAN, using the Poisson distribution. The likelihood for a Poisson distribution in STAN is called poisson, with the same parameter as in JAGS. Print the parameter summaries, and show the traceplot and density. Is the model converged? Are the results similar to the JAGS results?
 
 *run the model the STAN model*
-```{r}
+```{r, results='hide'}
 
 treemod.HW4.Q2.poiss <- stan(file = here("STAN_docs","HW4_Q2_poisson.stan"),
                              data = tree.counts)
@@ -157,7 +157,7 @@ The JAGS and the STAN methods showed similar results.
 
 *Write and Run The Jags model*
 
-```{r}
+```{r, results='hide'}
 
 write(("model{
        
@@ -171,12 +171,15 @@ r ~ dlnorm(0.0, 1.0E-6) #prior for number of successes
 for(i in 1:N) {
 Y[i] ~ dnegbin(p,r)
 }
-       
-       }"), here("JAGS_mods","HW3-Q3-NegBinom.txt"))
+
+#estimate parameters
+m <- r *(1-p)/p
+v <- m+m*m/r
+ }"), here("JAGS_mods","HW3-Q3-NegBinom.txt"))
 
 
 treemod.HW4.Q3.negbin <- jags(data = tree.counts,
-  parameters.to.save = c("p","r"),
+  parameters.to.save = c("p","r","m","v"),
   n.chains = 2,
   n.burnin = 1000,
   n.iter = 20000,
@@ -197,6 +200,13 @@ ggs_pairs(ggs.treemod.HW4.Q3.negbin)
 ggs_autocorrelation(ggs.treemod.HW4.Q3.negbin)
 
 ```
+  
+I can't spot any glaring convergence issues, in that rhats are close to one, effective sample size is >
+400 for all parameters, autocorreltation looks the same for each draw and is low with very minor instance of going below zero, the traceplot is relativley random across the traces and the chains are similar, and the posterior 
+densities are relativley smooth and similar across chains. I guess there is relatively high correlation between
+ the p and r parameters which could produce convergence problems, but the diagnostics suggest otherwise.  
+
+The variance (61.8) is larger than the mean (6.2).
 
 
 ## Problem 4:
@@ -205,7 +215,7 @@ ggs_autocorrelation(ggs.treemod.HW4.Q3.negbin)
 
 *run the stan model*
 
-```{r}
+```{r, results='hide'}
 
 treemod.HW4.Q4.negbinom <- stan(file = here("STAN_docs","HW4_Q4_negbinom-2.stan"),
                              data = tree.counts)
@@ -226,10 +236,56 @@ ggs_autocorrelation(ggs.treemod.HW4.Q4.negbin)
 stan_diag(treemod.HW4.Q4.negbinom)
 
 ```
+    
+The convergence is similar to that in Q3, the effective sample sizes are consistently larger than the
+lowest effective sample size in Q3 (720).  The autocorrleation was about the same, the rhats were close to 1,
+the trace plots were about the same as in Q3.  The STAN diag plots didn't show any divergences.
 
 ## Problem 5:
 
 #### Fit the data using the mean (m) as a parameter rather than probability (p), still using r as a parameter. Calculated mean and variance as estimated quantities. Give r an upper bound of 10 and use less informative priors. Estimate the variance as an estimated quantity. Look at the same convergence diagnostics. How does the convergence compare to the previous model in STAN? Do the mean and variance look similar to parts 3 and 4?
+
+*run the stan model*
+
+```{r, results='hide'}
+
+treemod.HW4.Q5.negbinom <- stan(file = here("STAN_docs","HW4_Q5_negbinom-2.stan"),
+                             data = tree.counts)
+
+```
+
+*Convergence Diagnostics*
+
+```{r}
+
+print(treemod.HW4.Q5.negbinom)
+ggs.treemod.HW4.Q5.negbin <- ggs(treemod.HW4.Q5.negbinom) |> 
+  filter(Parameter == "p"| Parameter == "r")
+ggs_density(ggs.treemod.HW4.Q5.negbin)
+ggs_traceplot(ggs.treemod.HW4.Q5.negbin)
+ggs_pairs(ggs.treemod.HW4.Q5.negbin)
+ggs_autocorrelation(ggs.treemod.HW4.Q5.negbin)
+stan_diag(treemod.HW4.Q5.negbinom)
+
+```
+  
+The convergence is similar to that in Q4.
+
+*comparison between Q3,Q4,Q5*
+
+```{r}
+print(treemod.HW4.Q3.negbin)
+print(treemod.HW4.Q4.negbinom)
+print(treemod.HW4.Q5.negbinom)
+
+```
+  
+The neff in this model appear to be on average larger than the those in Q4. But the Rhats are 
+lower, the autocorrelation plot is a little less but similar, and the traceplots look good. 
+The stan_diag plots showed no divergences.  
+
+The mean and the variances look similar to those in parts 3 and 4.
+
 
 ```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW4_convergenceSTAN.Rmd"),
