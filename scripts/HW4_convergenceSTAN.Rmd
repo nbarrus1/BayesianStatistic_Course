@@ -2,7 +2,7 @@
 title: "HW4_Convergence&STAN"
 author: "N. Barrus"
 date: "2024-02-14"
-output: html_document
+output: pdf_document
 ---
 
 ## Purpose:
@@ -289,5 +289,6 @@ The mean and the variances look similar to those in parts 3 and 4.
 
 ```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW4_convergenceSTAN.Rmd"),
-                  output_file = here("renders","HW4_convergenceSTAN.html"))
+                  output_file = here("renders","HW4_convergenceSTAN.html"),
+                  output_format = "all")
 ```
