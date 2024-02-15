@@ -1,0 +1,11 @@
+model{
+  a ~ dnorm (0, 1.0E-6)  	# prior for the intercept
+  prec ~ dgamma(0.001, 0.001)  # prior for the precision 
+  for (i in 1:16)  # for each of the 16 lakes
+  {
+    ymean[i] <- a # the predicted y value for the null model
+    CWD[i] ~ dnorm(ymean[i], prec) #  the actual y, normally distributed 
+    LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(CWD[i]-ymean[i])^2*prec
+  }
+}
+

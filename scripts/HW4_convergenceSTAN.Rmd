@@ -203,7 +203,27 @@ ggs_autocorrelation(ggs.treemod.HW4.Q3.negbin)
 
 #### Fit the same model to the data using STAN, with the same parameterization, and using the neg_binomial_2 for the likelihood. For the r parameter, don’t give it an upper limit\> ie define it as:real\<lower=0\> r; Estimate the variance and mean as either transformed parameters or estimated quantities. Look at the same convergence diagnostics, plus stan_diag for divergences. How does the convergence compare to the previous model in JAGS?
 
+*run the stan model*
+
 ```{r}
+
+treemod.HW4.Q4.negbinom <- stan(file = here("STAN_docs","HW4_Q4_negbinom-2.stan"),
+                             data = tree.counts)
+
+```
+
+*Convergence Diagnostics*
+
+```{r}
+
+print(treemod.HW4.Q4.negbinom)
+ggs.treemod.HW4.Q4.negbin <- ggs(treemod.HW4.Q4.negbinom) |> 
+  filter(Parameter == "p"| Parameter == "r")
+ggs_density(ggs.treemod.HW4.Q4.negbin)
+ggs_traceplot(ggs.treemod.HW4.Q4.negbin)
+ggs_pairs(ggs.treemod.HW4.Q4.negbin)
+ggs_autocorrelation(ggs.treemod.HW4.Q4.negbin)
+stan_diag(treemod.HW4.Q4.negbinom)
 
 ```
 
@@ -211,7 +231,7 @@ ggs_autocorrelation(ggs.treemod.HW4.Q3.negbin)
 
 #### Fit the data using the mean (m) as a parameter rather than probability (p), still using r as a parameter. Calculated mean and variance as estimated quantities. Give r an upper bound of 10 and use less informative priors. Estimate the variance as an estimated quantity. Look at the same convergence diagnostics. How does the convergence compare to the previous model in STAN? Do the mean and variance look similar to parts 3 and 4?
 
-```{r eval=FALSE, include=FALSE}
+```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW4_convergenceSTAN.Rmd"),
                   output_file = here("renders","HW4_convergenceSTAN.html"))
 ```

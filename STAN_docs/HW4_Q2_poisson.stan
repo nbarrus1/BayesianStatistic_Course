@@ -11,8 +11,7 @@ parameters {
 }
 
 // The model to be estimated. We model the output
-// 'y' to be normally distributed with mean 'mu'
-// and standard deviation 'sigma'.
+// 'y' to be poisson distributed with mean 'Lambda'
 model {
   lamda ~ lognormal(0.0,1000000);
   Y ~ poisson(lamda);

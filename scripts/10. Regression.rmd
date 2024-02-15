@@ -1,0 +1,317 @@
+---
+title: "10. Regression"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE}
+library(R2jags)
+library(ggmcmc)
+library(loo)
+library(rstan)
+library(here)
+theme_set(theme_bw())
+# to run R in parallel
+options(mc.cores = parallel::detectCores())
+# To keep a compiled version of the code so you don't have to recompile
+rstan_options(auto_write = TRUE)
+```
+
+# Frequentist version of linear regression for coarse woody debris
+
+```{r}
+cwd<-data.frame(TreeDens=c(1270, 1210, 1800, 1875, 1300, 2150, 1330, 964, 961, 1400, 1280, 976, 771, 833, 883, 956),
+  CWD=c(121, 41, 183, 130, 127, 134, 65, 52, 12, 46, 54, 97, 1, 4, 1, 4))
+head(cwd)
+cwdlm<-lm(CWD~TreeDens,data=cwd)
+summary(cwdlm)
+ggplot(cwd,aes(x=TreeDens,y=CWD))+
+  geom_point()+
+  stat_smooth(method="lm")
+predict(cwdlm,interval="confidence")
+```
+
+# Woody debris regression, Bayesian. Box 5.1
+
+```{r}
+write("model{
+  a ~ dnorm (0, 1.0E-6)  	# prior for the intercept
+  b ~ dnorm (0, 1.0E-6)  		# prior for the slope
+  prec ~ dgamma(0.001, 0.001)  # prior for the precision 
+  for (i in 1:16)  # for each of the 16 lakes
+  {
+    ymean[i] <- a + b*TreeDens[i]  # the predicted y value y=a+bx
+    CWD[i] ~ dnorm(ymean[i], prec) #  the actual y, normally distributed 
+    pred.obs[i] ~ dnorm(ymean[i], prec) # with error added
+    resid[i]<-CWD[i]-ymean[i]	
+    sresid[i]<-(CWD[i]-ymean[i])*sqrt(prec) 
+    sresid2[i]<-sresid[i]*sresid[i] 
+    rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+    LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(CWD[i]-ymean[i])^2*prec
+  }
+  for(j in 1:n.new) {
+    mean.new[j]<-a+b*x.new[j]
+    pred.new[j]~dnorm(mean.new[j],prec)
+  }
+  #summary statistics
+  prob.pos.b<-step(b)
+  sdy<-sd(CWD[])
+  sdy2<-sdy*sdy
+  r.squared<-1-1/(prec*sdy2)
+  chi.square.obs<-sum(sresid2[])
+  chi.square.rep<-sum(rep.sresid2[])
+  p.value<-step(chi.square.obs-chi.square.rep)
+}
+",file=here("JAGS_mods", "box5.1.txt"))
+
+data1<-list(TreeDens=cwd$TreeDens,
+  CWD=cwd$CWD,
+  x.new=c(800,1000,1200,1400,1600,1800,2000,2200), #New data for predicting
+  n.new=8)
+
+#inits are probably not needed
+init1<-list(list(a=0, b=0, prec=100),list(a=1, b=1, prec=50))
+#fit model
+res1<-jags(data1,
+  init1,
+  parameters.to.save = c("a","b","prec",
+  "ymean","pred.obs","mean.new","prob.pos.b","r.squared","LL"),
+  model.file = here("JAGS_mods", "box5.1.txt"),
+  n.chains=2,n.thin=10,n.iter=110000,n.burnin=10000)
+dim(res1$BUGSoutput$summary)
+#Print summary for only estimated parameters
+round(res1$BUGSoutput$summary[c("a","b","prec"),],4)
+```
+
+## plot credible interval. 
+
+This requires pulling out only the parameters we need from the summary table
+
+```{r}
+dimnames(res1$BUGSoutput$summary)
+n<-length(data1$TreeDens)
+meanrows<-paste0("ymean[",1:n,"]")
+round(res1$BUGSoutput$summary[meanrows,],2)
+cwd$Predict<-res1$BUGSoutput$summary[meanrows,"mean"]
+cwd$lci<-res1$BUGSoutput$summary[meanrows,"2.5%"]
+cwd$uci<-res1$BUGSoutput$summary[meanrows,"97.5%"]
+head(cwd)
+ggplot(cwd,aes(x=TreeDens,y=CWD))+geom_point()+
+  geom_ribbon(aes(x=TreeDens,ymin=lci,ymax=uci),alpha=0.3)+
+  geom_line(aes(x=TreeDens,y=Predict))+
+  xlab("Tree density")+ylab("Course woody debris")
+```
+
+## plot prediction interval
+
+```{r}
+predrows<-paste0("pred.obs[",1:length(data1$TreeDens),"]")
+cwd$lpi<-res1$BUGSoutput$summary[predrows,"2.5%"]
+cwd$upi<-res1$BUGSoutput$summary[predrows,"97.5%"]
+ggplot(cwd,aes(x=TreeDens,y=CWD))+geom_point()+
+  geom_ribbon(aes(x=TreeDens,ymin=lpi,ymax=upi),alpha=0.3)+
+  geom_ribbon(aes(x=TreeDens,ymin=lci,ymax=uci),alpha=0.5)+
+  geom_line(aes(x=TreeDens,y=Predict))+
+  xlab("Tree density")+ylab("Course woody debris")
+```
+
+## Plot credible interval of predictions from new data x.new 
+
+```{r}
+newtree<-data.frame(TreeDens=data1$x.new)
+meanrowsnew<-paste0("mean.new[",1:length(data1$x.new),"]")
+newtree$Predict<-res1$BUGSoutput$summary[meanrowsnew,"mean"]
+newtree$lci<-res1$BUGSoutput$summary[meanrowsnew,"2.5%"]
+newtree$uci<-res1$BUGSoutput$summary[meanrowsnew,"97.5%"]
+ggplot(newtree)+geom_point(data=cwd,aes(x=TreeDens,y=CWD))+
+  geom_ribbon(aes(x=TreeDens,ymin=lci,ymax=uci),alpha=0.3)+
+  geom_line(aes(x=TreeDens,y=Predict))+
+  xlab("Tree density")+ylab("Course woody debris")
+```
+
+## Summary statistics
+
+```{r}
+round(res1$BUGSoutput$summary[c("a","b","prec","prob.pos.b","r.squared"),],4)
+```
+
+
+## Get checking stats
+
+```{r}
+params.cwd=c("a","b","prec","p.value","resid","pred.obs","ymean",
+  "sresid","prob.pos.b","r.squared","chi.square.obs","LL",
+  "chi.square.rep","mean.new","pred.new")
+
+res1check<-jags(data=data1,
+  inits=init1,
+  parameters.to.save=params.cwd,
+  model.file=here("JAGS_mods","Box5.1.txt"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=20)
+res1check$BUGSoutput$summary[c("a","b","prec"),]
+```
+
+# To make model checking and diagnostic plots
+
+```{r}
+n<-length(data1$TreeDens)
+residrows<-paste0("resid[",1:n,"]")
+sresidrows<-paste0("sresid[",1:n,"]")
+meanrows<-paste0("ymean[",1:n,"]")
+sumtab<-res1check$BUGSoutput$summary #for ease in typing
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"],
+  SResid=sumtab[sresidrows,"mean"])
+ggplot(dfcheck)+
+  geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+
+  ggtitle("Residuals")
+ggplot(dfcheck)+
+  geom_point(aes(x=Predicted,y=SResid))+
+  geom_abline(intercept=0,slope=0) +
+  ylab("Standardized residual")+
+  ggtitle("Standardized residuals")
+ggplot(dfcheck,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()+
+  ggtitle("QQNormal of Residuals")
+ggplot(dfcheck,aes(x=SResid))+
+  geom_histogram(binwidth=.2)+
+  xlab("Standardized residuals")+
+  ggtitle("Histogram of residuals")
+```
+
+## Show a sample of the data points the Chi-squared discrepancy measure. 
+
+```{r}
+dim(res1check$BUGSoutput$sims.matrix)
+samplerow=sample(1:dim(res1check$BUGSoutput$sims.matrix)[1],400)
+dfchi<-data.frame(Observed=res1check$BUGSoutput$sims.matrix[samplerow,
+  "chi.square.obs"],
+  Replicated=res1check$BUGSoutput$sims.matrix[samplerow,"chi.square.rep"])
+ggplot(dfchi)+geom_point(aes(x=Observed,y=Replicated))+geom_abline(slope=1,intercept=0)+ggtitle("Chi squared discrepancy")
+```
+
+## Model checking numbers
+
+```{r}
+round(sumtab["p.value","mean"],3)   # Bayesian P value
+range(sumtab[,"Rhat"])  # Find range of BGR statistics for parameters. Both should be close to 1.0
+range(sumtab[,"n.eff"][sumtab[,"n.eff"]>1])  # Find range of effective sample sizes. Should be large (>400)
+which(sumtab[,"Rhat"]>1.1)
+```
+
+## Null model to compare to linear model for model selection
+
+```{r}
+write("model{
+  a ~ dnorm (0, 1.0E-6)  	# prior for the intercept
+  prec ~ dgamma(0.001, 0.001)  # prior for the precision 
+  for (i in 1:16)  # for each of the 16 lakes
+  {
+    ymean[i] <- a # the predicted y value for the null model
+    CWD[i] ~ dnorm(ymean[i], prec) #  the actual y, normally distributed 
+    LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(CWD[i]-ymean[i])^2*prec
+  }
+}
+",file= here("JAGS_mods", "box5.1null.txt"))
+data1null<-list(CWD=cwd$CWD)
+init1null<-list(list(a=0,  prec=100),list(a=1, prec=50))
+res1null<-jags(data1null,init1null,
+  parameters.to.save = c("a","prec","LL"),
+  model.file = here("JAGS_mods", "box5.1null.txt"),
+  n.chains=2,n.thin=10,n.iter=110000,n.burnin=10000)
+```
+
+## DIC, WAIC and LOOIC
+
+```{r}
+LLrows<-paste0("LL[",1:16,"]")
+waic1<-waic(res1$BUGSoutput$sims.matrix[,LLrows])$estimates
+waic1null<-waic(res1null$BUGSoutput$sims.matrix[,LLrows])$estimates
+looic1<-loo(res1$BUGSoutput$sims.matrix[,LLrows])$estimates
+looic1null<-loo(res1null$BUGSoutput$sims.matrix[,LLrows])$estimates
+
+ICtable<-data.frame(Model=c("Regression","Null"),
+                     DIC=c(res1$BUGSoutput$DIC,res1null$BUGSoutput$DIC),
+                     pD=c(res1$BUGSoutput$pD,res1null$BUGSoutput$pD),
+                     WAIC=c(waic1["waic","Estimate"],waic1null["waic","Estimate"]),
+                     pWAIC=c(waic1["p_waic","Estimate"],waic1null["p_waic","Estimate"]),
+                     LOOIC=c(looic1["looic","Estimate"],looic1null["looic","Estimate"]),
+                     pLOOIC=c(looic1["p_loo","Estimate"],looic1null["p_loo","Estimate"]),
+                     elpd=c(looic1["elpd_loo","Estimate"],looic1null["elpd_loo","Estimate"]))  %>% 
+  mutate(deltaDIC=DIC-min(DIC),
+    deltaWAIC=WAIC-min(WAIC),
+    deltaLOOIC=LOOIC-min(LOOIC),
+    WAIC.weight=exp(-0.5*deltaWAIC)/sum(exp(-0.5*deltaWAIC))) %>%
+  mutate(across(where(is.numeric), round, 2))
+ICtable
+```
+
+## STAN code for the same models
+
+```{r}
+standat1<-list(x=(cwd$TreeDens-mean(cwd$TreeDens))/sd(cwd$TreeDens),
+  y=cwd$CWD,N=nrow(cwd))
+stan1<-stan(file=here("STAN_docs","regression1.stan"),
+  data=standat1
+)
+print(stan1)
+stan_trace(stan1)
+stan_dens(stan1)
+```
+
+## Stan with diagnostics
+
+```{r}
+stan2<-stan(file=here("STAN_docs", "regression2.stan"),
+  data=standat1
+)
+print(stan2, pars=c("a","b","sigma","pvalue"))
+```
+
+## Get waic and looic
+
+```{r}
+ll1<-extract_log_lik(stan2,parameter_name = "loglik")
+waic(ll1)
+loo(ll1)
+```
+
+## Extract all values for chi-squared plot
+
+```{r}
+?extract
+chi2vals<-extract(stan2,pars=c("chi2sim","chi2dat"))
+chi2vals<-as.data.frame(chi2vals)
+head(chi2vals)
+ggplot(chi2vals,aes(x=chi2sim,y=chi2dat))+
+  geom_point(alpha=0.4)+
+  geom_abline(intercept=0,slope=1)
+```
+
+## get residuals and prediction for plots
+
+```{r}
+get_posterior_mean(stan2,pars="resid")
+cwd$Residual<-get_posterior_mean(stan2,pars="resid")[,"mean-all chains"]
+cwd$Predicted<-get_posterior_mean(stan2,pars="ypred")[,"mean-all chains"]
+ggplot(cwd,aes(x=Predicted,y=Residual))+
+  geom_point()+
+  geom_hline(yintercept=0)
+ggplot(cwd,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()
+```
+
+## Null and waic/looic comparison
+
+```{r}
+stan1null<-stan(file=here("STAN_docs", "regression1null.stan"),
+  data=standat1[-1]
+)
+ll1null<-extract_log_lik(stan1null,parameter_name = "loglik")
+waic(ll1null)
+loo(ll1null)
+```
+
+

@@ -1,0 +1,29 @@
+model{
+  a ~ dnorm (0, 1.0E-6)  	# prior for the intercept
+  b ~ dnorm (0, 1.0E-6)  		# prior for the slope
+  prec ~ dgamma(0.001, 0.001)  # prior for the precision 
+  for (i in 1:16)  # for each of the 16 lakes
+  {
+    ymean[i] <- a + b*TreeDens[i]  # the predicted y value y=a+bx
+    CWD[i] ~ dnorm(ymean[i], prec) #  the actual y, normally distributed 
+    pred.obs[i] ~ dnorm(ymean[i], prec) # with error added
+    resid[i]<-CWD[i]-ymean[i]	
+    sresid[i]<-(CWD[i]-ymean[i])*sqrt(prec) 
+    sresid2[i]<-sresid[i]*sresid[i] 
+    rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+    LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(CWD[i]-ymean[i])^2*prec
+  }
+  for(j in 1:n.new) {
+    mean.new[j]<-a+b*x.new[j]
+    pred.new[j]~dnorm(mean.new[j],prec)
+  }
+  #summary statistics
+  prob.pos.b<-step(b)
+  sdy<-sd(CWD[])
+  sdy2<-sdy*sdy
+  r.squared<-1-1/(prec*sdy2)
+  chi.square.obs<-sum(sresid2[])
+  chi.square.rep<-sum(rep.sresid2[])
+  p.value<-step(chi.square.obs-chi.square.rep)
+}
+
