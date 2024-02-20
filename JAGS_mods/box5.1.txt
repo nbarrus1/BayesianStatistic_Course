@@ -13,10 +13,6 @@ model{
     rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
     LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(CWD[i]-ymean[i])^2*prec
   }
-  for(j in 1:n.new) {
-    mean.new[j]<-a+b*x.new[j]
-    pred.new[j]~dnorm(mean.new[j],prec)
-  }
   #summary statistics
   prob.pos.b<-step(b)
   sdy<-sd(CWD[])

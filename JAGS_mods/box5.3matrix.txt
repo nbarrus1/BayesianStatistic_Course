@@ -1,0 +1,12 @@
+model{
+  for (i in 1:Ncoef)  {
+    b[i] ~ dnorm(0, 1.0E-6)
+  }
+  prec ~ dgamma(0.001, 0.001)
+  for (i in 1:N)		
+  {
+    ymean[i] <- inprod(b,xMatrix[i,])
+    Y[i] ~ 	dnorm(ymean[i],prec)
+  }
+}
+

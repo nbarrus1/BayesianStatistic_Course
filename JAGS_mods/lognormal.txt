@@ -1,0 +1,14 @@
+model
+{
+norm.mean ~ dnorm(0, 1.0E-6)  	
+norm.prec~dgamma(0.01,0.01)
+norm.var<-1/norm.prec   
+for (i in 1:40)  					
+{
+  Y[i]~dlnorm(norm.mean,norm.prec)
+}
+ lnorm.mean<-exp(norm.mean+1/(2*norm.prec))  #Calculate the expected value and variance of the untranformed data
+ lnorm.var<-exp(2*norm.mean)*exp(1/norm.prec)*(exp(1/norm.prec)-1)
+ lnorm.median<-exp(norm.mean)  
+}
+

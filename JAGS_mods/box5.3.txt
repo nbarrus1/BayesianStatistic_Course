@@ -1,0 +1,40 @@
+model
+{
+  mLAT<-mean(LAT)
+  mLONG<-mean(LONG)
+  for (i in 1:73)			# for each of the 73 sites
+  {
+    Y[i] ~ dnorm(ymean[i], prec)	# assume normal distribution
+    ymean[i] <- a + b[1]*(LONG[i]-mLONG) + b[2]*(LAT[i]-mLAT)
+   pred.obs[i]~dnorm(ymean[i],prec)   # Predicted Y value
+   resid[i]<-Y[i]-ymean[i]			# Residual 
+   sresid[i]<-(Y[i]-ymean[i])*sqrt(prec)  # Standardized residual
+   sresid2[i]<-sresid[i]*sresid[i]  # Pearson residual squared
+   rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+   LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+  }
+  # uninformative priors
+  a ~ dnorm(0, 1.0E-6)
+  for (i in 1:2)
+  {
+    b[i] ~ dnorm(0, 1.0E-6)
+  }
+  prec ~ dgamma(0.001, 0.001)
+  # make predictions over longitudes 93 to 120
+  for (i in 93:120)
+  {
+    predlat35[i] <- a + b[1]*(i-mLONG) + b[2]*(35-mLAT)
+    predlat45[i] <- a + b[1]*(i-mLONG) + b[2]*(45-mLAT)
+    # back-transformed prediction at latitude 35
+    predrichlat35[i] <- exp(predlat35[i]) - 1
+    predrichlat45[i] <- exp(predlat45[i]) - 1
+  }
+ # Model checking
+ sdy<-sd(Y[])
+ sdy2<-sdy*sdy
+ r.squared<-1-1/(prec*sdy2)
+ chi.square.obs<-sum(sresid2[])
+ chi.square.rep<-sum(rep.sresid2[])
+ p.value<-step(chi.square.obs-chi.square.rep)
+}
+

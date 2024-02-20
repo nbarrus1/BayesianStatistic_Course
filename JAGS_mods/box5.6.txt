@@ -1,0 +1,30 @@
+model {
+    a ~ dunif (0, 1000)					# uninformative prior, constrained to be positive
+    b ~ dnorm (0, 1.0E-6)				# uninformative prior
+    c ~ dunif(0, 10)							# uninformative prior, constrained to be positive
+    prec ~ dgamma(0.001, 0.001)	# uninformative prior
+    mTree <- mean(TreeDens[])  	# mean of the explanatory variable
+    
+    for (i in 1:16)  # for each of the 16 lakes
+    {
+      predm[i] <- a / (1 + exp(-(b+c*(TreeDens[i]-mTree))))  # predicted CWD
+      logpred[i] <- log(predm[i])  # take the logarithm of the prediction
+      CWD[i] ~ dlnorm(logpred[i], prec)  # CWD drawn from lognormal
+      logCWD[i]<-log(CWD[i])
+      pred.obs[i]~dlnorm(logpred[i],prec)   # Predicted CWD at this tree density
+      resid[i]<-logCWD[i]-logpred[i]			# Residual CWD at this tree density
+      sresid[i]<-(logCWD[i]-logpred[i])*sqrt(prec)  # Standardized residual
+      sresid2[i]<-sresid[i]*sresid[i]  # Pearson residual squared
+      rep.sresid2[i]<-(log(pred.obs[i])-logpred[i])*(log(pred.obs[i])-logpred[i])*prec
+    }
+    prob.pos.b<-step(b)
+    chi.square.obs<-sum(sresid2[])
+    chi.square.rep<-sum(rep.sresid2[])
+    p.value<-step(chi.square.obs-chi.square.rep)
+    # make predictions at new values for plotting
+    for(j in 1:n.new) {
+      mean.new[j] <- a / (1 + exp(-(b+c*(x.new[j]-mTree))))  # predicted CWD
+      logpred.new[j] <- log(mean.new[j])  # take the logarithm of the prediction
+      pred.new[j] ~ dlnorm(logpred.new[j], prec)  # CWD drawn from lognormal
+     }
+  }

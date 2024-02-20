@@ -289,6 +289,6 @@ The mean and the variances look similar to those in parts 3 and 4.
 
 ```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW4_convergenceSTAN.Rmd"),
-                  output_file = here("renders","HW4_convergenceSTAN.html"),
+                  output_file = here("renders","HW4_convergenceSTAN.pdf"),
                   output_format = "all")
 ```
