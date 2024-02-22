@@ -1,0 +1,20 @@
+model {
+for (i in 1:26)  # for each of the 26 raptor species
+{
+  lp[i] <- a + b*Mass[i] + c*Owl[i]  # linear predictor
+  lm[i] ~ dnorm(lp[i], prec)  # assume logit(Mortality) is normally distributed
+  pred.mort[i]<-exp(lp[i])/(1+exp(lp[i]))
+  pred.obs[i]~dnorm(lp[i],prec)   # Predicted Y value
+  resid[i]<-lm[i]-lp[i]			# Residual 
+  sresid[i]<-(lm[i]-lp[i])*sqrt(prec)  # Standardized residual
+  sresid2[i]<-sresid[i]*sresid[i]  # Pearson residual squared
+  rep.sresid2[i]<-(pred.obs[i]-lp[i])*(pred.obs[i]-lp[i])*prec
+}
+a ~ dnorm(0, 1.0E-6)  # intercept term
+b ~ dnorm(0, 1.0E-6)  # effect of body mass
+c ~ dnorm(0, 1.0E-6)  # effect of being an owl
+prec ~ dgamma(0.001, 0.001)  # precision
+chi.square.obs<-sum(sresid2[])
+chi.square.rep<-sum(rep.sresid2[])
+p.value<-step(chi.square.obs-chi.square.rep)
+}

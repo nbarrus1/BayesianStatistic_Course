@@ -1,0 +1,330 @@
+---
+title: "12. GLM"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Lecture 12. GLM
+
+```{r,message=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(rstan)
+library(loo)
+library(gridExtra)
+library(DHARMa)
+library(here)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+Plots for GLM mean to variance
+
+```{r,warnings=FALSE}
+# Beta conversions
+betab<-function(mu,a) a*(1-mu)/mu
+betase<-function(a,b) sqrt(a*b/((a+b)^2*(a+b+1)))
+
+#Plot of residual variance vs. mean 
+plotdat<-expand.grid(Mean=seq(0,1,by=0.02),
+  Distribution=c("Normal","Poisson","Negative Binomial","Beta"),Variance=0.5) %>%
+  mutate(Variance=ifelse(Distribution=="Poisson",Mean,Variance),
+         Variance=ifelse(Distribution=="Negative Binomial",Mean+Mean^2/3,Variance),
+         Variance=ifelse(Distribution=="Beta",betase(2,betab(Mean,2)),Variance))
+ggplot(plotdat,aes(x=Mean,y=Variance,color=Distribution))+
+  geom_line(lwd=2)
+```
+
+## Box 5.10 Poisson with log link
+
+```{r}
+ant<-read.csv(here("data","ant.csv"))
+antlong<-ant %>% pivot_longer(c("lat","elev","habitat"),values_to="Value",names_to="Variable")
+ggplot(antlong,aes(x=Value,y=richness))+
+  geom_smooth(method=lm)+
+  geom_point()+
+  facet_wrap(Variable~.,scales="free")
+ggplot(antlong,aes(x=Value,y=richness))+
+  geom_smooth(method=glm,method.args = list(family = "poisson"))+
+  geom_point()+
+  facet_wrap(Variable~.,scales="free")
+#?glm
+```
+
+```{r}
+write("model 
+{ 
+# uses centred data
+
+  ml <- mean(lat[])  # calculates averages for centring
+  me <- mean(elev[])
+
+  for( i in 1 : N)  # for each of the N data points
+  { 
+    richness[i] ~ dpois(mu[i])  # ant species richness drawn from a Poisson
+    log(mu[i]) <- alpha + beta[1]*(lat[i]-ml) + beta[2]*(elev[i]-me) + beta[3]*habitat[i]  # a log-linear model for the average
+    lresid[i]<-log(richness[i])-log(mu[i]) #Works if no zero values in richness    
+    resid[i]<-richness[i]-mu[i]  
+    sresid[i]<-(richness[i]-mu[i] )/sqrt(mu[i]) #Pearson residual
+    simRichness[i]~dpois(mu[i])
+  } 
+  intercept <- alpha - beta[1]*ml - beta[2]*me  # recovers the intercept term
+# informative priors
+  preclat <- 1 / (0.04 * 0.04)  # precision of lat effect, based on s.e. of 0.04
+  precelev <- 1 / (0.0003 * 0.0003)  # precision of elev effect
+  alpha ~ dnorm(0.0,1.0E-6)  # uninformative intercept
+  beta[1] ~ dnorm(-0.1725,preclat)  # informative effect of latitude
+  beta[2] ~ dnorm(-0.0022,precelev)  # informative effect of elevation
+  beta[3] ~ dnorm(0.0,1.0E-6)  # uninformative effect of habitat
+}",file=here("JAGS_mods","box5.10.txt"))
+data5.10<-c(ant,N=nrow(ant))
+init1<-list(list(alpha=0, beta=c(0,0,0)),list(alpha=.1, beta=c(.1,.1,.1)))
+res5.10<-jags(data5.10,init1,
+  model.file=here("JAGS_mods","box5.10.txt"),
+  parameters.to.save=c(c("alpha","beta","mu","intercept","lresid","resid","sresid","simRichness")),
+  n.chains=2,n.iter=310000,n.burnin=10000,n.thin=20)
+
+range(res5.10$BUGSoutput$summary[,"Rhat"])  
+range(res5.10$BUGSoutput$summary[,"n.eff"]) 
+res5.10$BUGSoutput$summary[c("alpha","beta[1]","beta[2]","beta[3]","intercept"),]
+```
+
+## Plot residuals
+
+```{r}
+ant$mu<-res5.10$BUGSoutput$summary[paste0("mu[",1:data5.10$N,"]"),"mean"]
+ant$lresid<-res5.10$BUGSoutput$summary[paste0("lresid[",1:data5.10$N,"]"),"mean"]
+ant$resid<-res5.10$BUGSoutput$summary[paste0("resid[",1:data5.10$N,"]"),"mean"]
+ant$sresid<-res5.10$BUGSoutput$summary[paste0("sresid[",1:data5.10$N,"]"),"mean"]
+g1<-ggplot(ant)+
+  geom_point(aes(x=log(mu),y=lresid))+
+  xlab("Predicted log mean")+ylab("Residuals in log scale")+
+  geom_abline(aes(intercept=0,slope=0))+
+  ggtitle("Log scale residual")
+g2<-ggplot(ant)+
+  geom_point(aes(x=mu,y=resid))+
+  xlab("Predicted mean")+
+  ylab("Residuals in original scale")+
+  geom_abline(aes(intercept=0,slope=0))+ggtitle("Not log")
+g3<-ggplot(ant)+geom_point(aes(x=mu,y=resid))+
+  xlab("Predicted mean")+
+  ylab("Pearson residuals")+
+  geom_abline(aes(intercept=0,slope=0))+
+  ggtitle("Pearson residual")
+grid.arrange(g1,g2,g3,ncol=3)
+```
+
+## DHARMa residuals. 
+
+See here https://cran.r-project.org/web/packages/DHARMa/vignettes/DHARMa.html for details on how to implement. DHARMa does this automatically for glm, glmer, gam, glmmTMB, etc. 
+
+```{r}
+mod1<-glm(richness~lat+elev+habitat,data=ant,family="poisson")
+plot(simulateResiduals(mod1))
+```
+
+For Bayesian models:
+
+1. pull out a matrix of predicted values from the MCMC draws. and transpose so data points are rows and draws are columns
+2. Sample the MCMC draws so you only have 1000, or the plot will be too busy
+3. Create DHARMa object
+4. Make plot
+
+```{r}
+#Get MCMC draws of the simulated richness
+simRichness<-t(res5.10$BUGSoutput$sims.matrix[,paste0("simRichness[",1:data5.10$N,"]")])
+dim(simRichness)
+#Get a smaller sample
+simRichness<-simRichness[,sample(1:30000,1000)]
+#Pull out predicted mean values from summary
+predRichness<-res5.10$BUGSoutput$summary[paste0("mu[",1:data5.10$N,"]"),"mean"]
+#?createDHARMa
+DHARMaRes <- createDHARMa(simulatedResponse =simRichness , 
+                  observedResponse = data5.10$richness, 
+             fittedPredictedResponse = predRichness, 
+  integerResponse = TRUE)
+#Make DHARMa plot
+plot(DHARMaRes,quantreg=FALSE)
+```
+
+## Logit example plot
+
+```{r}
+logit<-function(p) log(p/(1-p))
+ilogit<-function(x) exp(x)/(1+exp(x))
+plotdat<-data.frame(logit.p=rnorm(100)) %>%
+  mutate(p=ilogit(logit.p))
+ggplot(plotdat,aes(x=logit.p,y=p))+geom_line(lwd=2)
+```
+
+## Box 5.5 Bird mortality. Using logit transformation for proportion data  
+
+```{r}
+bird<-read.csv(here("data","birdMortality.csv"))
+summary(bird)
+bird$Owl<-factor(bird$Owl)
+ggplot(bird)+geom_point(aes(x=Mass,y=Mortality,col=Owl))+theme_bw()
+```
+
+## Model in JAGS
+
+```{r}
+write("model {
+for (i in 1:26)  # for each of the 26 raptor species
+{
+  lp[i] <- a + b*Mass[i] + c*Owl[i]  # linear predictor
+  lm[i] ~ dnorm(lp[i], prec)  # assume logit(Mortality) is normally distributed
+  pred.mort[i]<-exp(lp[i])/(1+exp(lp[i]))
+  pred.obs[i]~dnorm(lp[i],prec)   # Predicted Y value
+  resid[i]<-lm[i]-lp[i]			# Residual 
+  sresid[i]<-(lm[i]-lp[i])*sqrt(prec)  # Standardized residual
+  sresid2[i]<-sresid[i]*sresid[i]  # Pearson residual squared
+  rep.sresid2[i]<-(pred.obs[i]-lp[i])*(pred.obs[i]-lp[i])*prec
+}
+a ~ dnorm(0, 1.0E-6)  # intercept term
+b ~ dnorm(0, 1.0E-6)  # effect of body mass
+c ~ dnorm(0, 1.0E-6)  # effect of being an owl
+prec ~ dgamma(0.001, 0.001)  # precision
+chi.square.obs<-sum(sresid2[])
+chi.square.rep<-sum(rep.sresid2[])
+p.value<-step(chi.square.obs-chi.square.rep)
+}",here("JAGS_mods","Model5.5.txt"))
+
+init1=list(a=0, b=0, c=0, prec=20)
+init2=list(a=1, b=1, c=1, prec=50)
+
+bird$lm<-log(bird$Mortality/(1-bird$Mortality)) # Make logit of mortality for JAGS
+  
+res5.5<-jags(bird[,c("Mass","Owl","lm")],
+             list(init1,init2),
+             model.file=here("JAGS_mods","Model5.5.txt"),
+            parameters.to.save=c("a","b","c","prec","p.value","resid","pred.mort","lp","pred.obs","sresid","chi.square.obs","chi.square.rep"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=20)
+
+range(res5.5$BUGSoutput$summary[,"Rhat"])  # Find range of BGR statistics for parameters. Both should be close to 1.0
+range(res5.5$BUGSoutput$summary[,"n.eff"])  # Find range of effective sample sizes. SHould be large (>400)
+```
+
+Plot residuals
+
+```{r}
+n<-dim(bird)[1]
+sumtab<-res5.5$BUGSoutput$summary
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("pred.obs[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"])
+g1<-ggplot(dfcheck)+
+  geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+g2<-ggplot(dfcheck,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+grid.arrange(g1,g2,ncol=2)
+res5.5$BUGSoutput$summary["p.value","mean"]
+```
+
+Plot fit in probability space
+
+```{r}
+predrows<-paste0("pred.mort[",1:n,"]")
+bird$Predict<-res5.5$BUGSoutput$summary[predrows,"mean"]
+bird$lci<-res5.5$BUGSoutput$summary[predrows,"2.5%"]
+bird$uci<-res5.5$BUGSoutput$summary[predrows,"97.5%"]
+ggplot(bird)+geom_point(aes(x=Mass,y=Mortality,col=Owl))+theme_bw()+
+ geom_line(aes(x=Mass,y=Predict,col=Owl)) +
+ geom_ribbon(aes(x=Mass,ymin=lci,ymax=uci,fill=Owl),alpha=0.3)
+round(res5.5$BUGSoutput$summary[c("a","b","c"),c("mean","sd","2.5%","50%","97.5%")],3)
+```
+
+## Box 5.7 logistic regression
+
+```{r}
+write("model
+{
+  a ~ dnorm(0, 1.0E-6)  # the intercept term
+  for (i in 1:6)  # the 6 regression coefficients
+  {
+    b[i] ~ dnorm(0, 1.0E-6)  # uninformative priors
+  }
+
+  mnr <- mean(numrock[])  # means of the explanatory variables
+  mv <- mean(volcanic[])
+  mrc <- mean(rockcell[])
+  msl <- mean(nearslope[])
+  mso <- mean(nearsouth[])
+  for (i in 1:325)  # for each of the sites
+  {
+    logit(p[i]) <- a + b[1]*(numrock[i]-mnr) + b[2]*(volcanic[i]-mv) + b[3]*(rockcell[i]-mrc) + b[4]*(nearslope[i]-msl) + b[5]*(nearslope[i]-msl)*(nearslope[i]-msl) + b[6]*(nearsouth[i]-mso)
+  # logit(p) is a function of the explanatory variables and regression coeff's
+    lr[i] ~ dbern(p[i])  # observed occurrence drawn from a Bernoulli dist'n
+    resid[i]<-lr[i]-p[i]
+    simval[i]~dbern(p[i])
+  }
+}",file=here("JAGS_mods","box5.7.txt"))
+
+init1<-list(a=0, b=c(0,0,0,0,0,0))
+init2<-list(a=0.1, b=c(0.1,0.1,0.1,0.1,0.1,0.1))
+
+lr<-read.csv(here("data","lr.csv"))
+
+res5.7<-jags(lr, list(init1,init1), 
+               parameters.to.save=c("p","a","b","resid","simval"), 
+               model.file=here("JAGS_mods","box5.7.txt"), n.chains=2, 
+               n.iter=110000, n.burnin=10000,
+               n.thin=2)
+
+#Check convergence
+range(res5.7$BUGSoutput$summary[,"Rhat"])
+range(res5.7$BUGSoutput$summary[,"n.eff"])
+```
+
+# Coefficients
+
+```{r}
+mc1<-ggs(as.mcmc(res5.7))
+ggs_caterpillar(filter(mc1,grepl("b",Parameter)),sort=FALSE)
+```
+
+Pull out predictions in probability space
+
+```{r}
+n<-dim(lr)[1]
+prows<-paste0("p[",1:n,"]")   #make list of names of probabilities
+lr$p<-res5.7$BUGSoutput$summary[prows,"mean"]
+round(res5.7$BUGSoutput$summary[prows[1:4],],3)
+ggplot(lr,aes(x=p,y=lr))+
+  geom_point(alpha=0.3)
+ggplot(lr,aes(x=factor(lr),y=p))+
+  geom_boxplot(fill="grey")+
+  xlab("Presence of lr")+
+  ylab("Predicted presence")
+
+```
+
+Confusion matrix
+
+```{r}
+confusion<-table(round(lr$p),lr$lr)
+confusion
+(confusion[1,1]+confusion[2,2])/sum(confusion)
+```
+
+Residuals
+
+```{r}
+residrows<-paste0("resid[",1:n,"]")
+lr$Residual<-res5.7$BUGSoutput$summary[residrows,"mean"]
+ggplot(lr,aes(x=p,y=Residual))+geom_point()
+
+#DHARMa residuals. 
+simval<-t(res5.7$BUGSoutput$sims.matrix[,paste0("simval[",1:nrow(lr),"]")])
+dim(simval)
+simval<-simval[,sample(1:80000,500)]
+DHARMaRes = createDHARMa(simulatedResponse =simval , observedResponse = lr$lr, 
+             fittedPredictedResponse = lr$p, integerResponse = T)
+plot(DHARMaRes)
+```
+

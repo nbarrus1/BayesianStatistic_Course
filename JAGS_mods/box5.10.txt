@@ -1,0 +1,25 @@
+model 
+{ 
+# uses centred data
+
+  ml <- mean(lat[])  # calculates averages for centring
+  me <- mean(elev[])
+
+  for( i in 1 : N)  # for each of the N data points
+  { 
+    richness[i] ~ dpois(mu[i])  # ant species richness drawn from a Poisson
+    log(mu[i]) <- alpha + beta[1]*(lat[i]-ml) + beta[2]*(elev[i]-me) + beta[3]*habitat[i]  # a log-linear model for the average
+    lresid[i]<-log(richness[i])-log(mu[i]) #Works if no zero values in richness    
+    resid[i]<-richness[i]-mu[i]  
+    sresid[i]<-(richness[i]-mu[i] )/sqrt(mu[i]) #Pearson residual
+    simRichness[i]~dpois(mu[i])
+  } 
+  intercept <- alpha - beta[1]*ml - beta[2]*me  # recovers the intercept term
+# informative priors
+  preclat <- 1 / (0.04 * 0.04)  # precision of lat effect, based on s.e. of 0.04
+  precelev <- 1 / (0.0003 * 0.0003)  # precision of elev effect
+  alpha ~ dnorm(0.0,1.0E-6)  # uninformative intercept
+  beta[1] ~ dnorm(-0.1725,preclat)  # informative effect of latitude
+  beta[2] ~ dnorm(-0.0022,precelev)  # informative effect of elevation
+  beta[3] ~ dnorm(0.0,1.0E-6)  # uninformative effect of habitat
+}
