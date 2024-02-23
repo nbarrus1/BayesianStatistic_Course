@@ -73,7 +73,8 @@ tree.counts <- list(Y = Y,
 
 tree.counts
 
-deet.data <- read_csv(here("data","deet.csv"))
+deet.data <- read_csv(here("data","deet.csv")) |> 
+  mutate(z.dose = (dose - mean(dose))/sd(dose))
 
 knitr::kable(head(deet.data), caption = "Data Preview")
 ```
@@ -129,10 +130,63 @@ The Negative binomial model is preferred.
 
 #### B) Do the same with the WAIC in STAN. Which model is preferred?  
 
-#### C) Do the same with the LOOIC in STAN. Which model is preferred?  
+*run the STAN mods*
 
-#### D) Compare the three information criteria in part a, b and c. Do they all give the same results? Is this result consistent with what you learn by looking at the mean and variance that you estimated when you ran the negative binomial model?  
+```{r, results= "hide"}
 
+treemod.poiss <- stan(file = here("STAN_docs","HW5_treecounts_poisson_modsel.stan"),
+                             data = tree.counts)
+treemod.negbin <- stan(file = here("STAN_docs","HW5_treecounts_negbin_modsel.stan"),
+                             data = tree.counts)
+
+```
+   *create WAIC table*
+   
+```{r}
+
+
+WAIC.table <- tibble(model = c("Poisson", "Neg-Binomial"),
+                    model.ls = c(treemod.poiss, treemod.negbin)) |> 
+  mutate(LL.ls = map(model.ls,extract_log_lik, parameter_name = "LL"),
+         WAIC.ls = map(LL.ls, waic),
+         elpd_waic = map_dbl(WAIC.ls,c(1,1)),
+         p_waic = map_dbl(WAIC.ls,c(1,2)),
+         waic = map_dbl(WAIC.ls,c(1,3)),
+         deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+
+WAIC.table |> select(-model.ls,-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC Table")
+
+            
+```
+
+#### C) Do the same with the LOOIC in STAN. Which model is preferred?
+
+  
+     *create LOOIC table*
+   
+```{r}
+
+
+LOOIC.table <- tibble(model = c("Poisson", "Neg-Binomial"),
+                    model.ls = c(treemod.poiss, treemod.negbin)) |> 
+  mutate(LL.ls = map(model.ls,extract_log_lik, parameter_name = "LL"),
+         looic.ls = map(LL.ls, loo),
+         elpd_looic = map_dbl(looic.ls,c(1,1)),
+         p_looic = map_dbl(looic.ls,c(1,2)),
+         looic = map_dbl(looic.ls,c(1,3)),
+         deltaLooic = looic - min(looic),
+         weight = round(exp(-2*deltaLooic)/sum(exp(-2*deltaLooic)),digits = 5))
+
+LOOIC.table |> select(-model.ls,-LL.ls,-looic.ls) |> knitr::kable(caption = "LOOIC Table")
+
+            
+```
+
+#### D) Compare the three information criteria in part a, b and c. Do they all give the same results? Is this result consistent with what you learn by looking at the mean and variance that you estimated when you ran the negative binomial model?   
+
+  The three methods of model selection all selected the negative binomial model. This is consistent with the mean and variance that we estimated in the negative binomial model. The mean and the variance were not equal so the Poisson model should not be preferred.  
 
 ## Problem 2: Linear Regression
 
@@ -140,17 +194,117 @@ The Negative binomial model is preferred.
 
 #### A) Use STAN to run a linear regression to predict bites from dose, using a normal prior for the intercept (a) and slope (b), and an exponential prior for the residual variance. Standardize the X variable by subtracting the mean and dividing by the standard deviation.  Give the summary statistics for a, b and the residual variance, along with the probability that the slope is positive.   
 
+*fit the regression model*
+
+```{r, results= "hide"}
+
+stan.deet.data <- list(x = deet.data$z.dose,
+                       y = deet.data$bites,
+                       N = length(deet.data$z.dose),
+                       volDose = (2.8 - mean(deet.data$dose))/sd(deet.data$dose))
+
+fit.stan.reg <- stan(file = here("STAN_docs","HW5_linearregression.stan"),
+                     data = stan.deet.data)
+
+stan_trace(fit.stan.reg,pars=c("a","b","sigma","pvalue","probPos"))
+stan_dens(fit.stan.reg,pars=c("a","b","sigma","pvalue","probPos"))
+```
+   
+*summary stats of model*
+
+```{r}
+
+print(fit.stan.reg,pars=c("a","b","sigma","probPos"))
+
+```
+
+
 #### B) Plot the data and the model fit, with the credible interval of the line. In STAN, you can make a new generated quantity for the mean prediction, say ymean, and then, in R, extract its summary statistics with summary(stanobjectname,par=”ymean”)  
+
+*plot of the data and fit*
+
+```{r}
+
+line.posterior <- summary(fit.stan.reg, par = "ymean")
+predicted.posterior <- summary(fit.stan.reg, par = "ypred")
+
+
+deet.data.fit<- deet.data |> 
+  mutate(yline = line.posterior$summary[1:(stan.deet.data$N)],
+         yline.low = line.posterior$summary[(stan.deet.data$N*3+1):(stan.deet.data$N*4)],
+         yline.upp = line.posterior$summary[(stan.deet.data$N*7+1):(stan.deet.data$N*8)],
+         ypred.low = predicted.posterior$summary[(stan.deet.data$N*3+1):(stan.deet.data$N*4)],
+         ypred.upp = predicted.posterior$summary[(stan.deet.data$N*7+1):(stan.deet.data$N*8)],
+         Residual = get_posterior_mean(fit.stan.reg,pars="resid")[,"mean-all chains"],
+         Predicted = get_posterior_mean(fit.stan.reg,pars="ypred")[,"mean-all chains"])
+
+
+deet.data.fit |> 
+  ggplot(aes(y = bites,x = z.dose))+
+  geom_ribbon(aes(x = z.dose, ymax = ypred.upp, ymin = ypred.low), alpha = 0.3)+
+  geom_ribbon(aes(x = z.dose, ymax = yline.upp, ymin = yline.low), alpha = 0.6)+
+  geom_line(aes(x = z.dose, y = yline))+
+  geom_point()
+  
+
+
+```
+
 
 #### C) Plot the residuals against the predicted values, and the qq normal plot of the residuals. Are the assumptions of the model met?  
 
+note) I extracted the predicted and residuals in the code from part B  
+
+*residual plots*
+
+```{r}
+deet.data.fit |> 
+  ggplot(aes(x=Predicted,y=Residual))+
+  geom_point()+
+  geom_hline(yintercept=0)
+
+deet.data.fit |> 
+ggplot(aes(sample=Residual))+
+  geom_qq()+geom_qq_line()
+
+
+```
+
+
+  The model assumption are met based on the residual plots, there is no drastic change in residual variance across the predicted values and the residuals fall fairly close to the normal QQ line.
+
 #### D) Plot the chi-squared discrepancy plot and calculate the Bayesian P value. Is the model adequate by this metric?  
+
+*plots*  
+
+```{r}
+
+chi2.discr <- as_tibble(rstan::extract(fit.stan.reg, pars = c("chi2sim","chi2dat")))
+
+chi2.discr |> 
+ggplot(aes(x=chi2sim,y=chi2dat))+
+  geom_point(alpha=0.4)+
+  geom_abline(intercept=0,slope=1)
+
+print(fit.stan.reg,pars=c("pvalue"))
+
+```
+
+  By this metric the fit seems adequate. The points in the plot fall equally above and below the line, thoough there is a small group at chi2sim values greater than 85 that only fall below the line.  The bayesian pvalue of 0.47 is close to the ideal of 0.5. So the group that only fell below didn't appear to cause any dramatic problems in fit.
+
 
 #### E) Say we want to use the model to predict a plausible range of values for the number of bites a particular volunteer might get with a DEET dose of exactly 2.8. Add this calculation to your STAN code and give the mean and 95% interval of this person’s square root transformed number of bites.  
 
+note) I added the transformed dose to the stan.deet.data
 
 
+```{r}
 
+print(fit.stan.reg,pars=c("volMean","volPred"))
+
+```
+  
+  A new patient receiving a dose of 2.8 is predicted to have a mean number of bites of 2.74 with a 95% credible interval of (2.52,2.97), and a 95% prediction interval of (1.35,4.11).
 
 ```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW5_ModelSelectionAndLinearRegression.Rmd"),
