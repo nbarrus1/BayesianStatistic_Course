@@ -1,0 +1,19 @@
+model   
+{  # simple one-way ANOVA
+  for (i in 1:4)  # the mean for each of the four locations, drawn from uninformative priors
+  {
+    a[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau)  # mass drawn from a normal distribution
+    Yrep[i]~ dnorm(mean[i], tau)
+    resid[i]<-Y[i]-mean[i]
+    sresid2[i]<-resid[i]*resid[i]*tau
+    sresid2rep[i]<-(Yrep[i]-mean[i])*(Yrep[i]-mean[i])*tau
+  }
+    p.value<-step(sum(sresid2rep)-sum(sresid2))
+}
+

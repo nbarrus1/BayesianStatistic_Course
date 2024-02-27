@@ -1,0 +1,369 @@
+---
+title: "13. ANOVA"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(rstan)
+library(loo)
+library(here)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+
+## Starling anova box 6.1
+
+```{r}
+starling<-read.csv(here("data","starling6.1.csv"))
+summary(starling)
+
+ggplot(starling)+
+  geom_boxplot(aes(group=factor(location),x=location,y=Y))+ylab("Starling mass")
+
+
+```
+```{r}
+write("model   
+{  # simple one-way ANOVA
+  for (i in 1:4)  # the mean for each of the four locations, drawn from uninformative priors
+  {
+    a[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau)  # mass drawn from a normal distribution
+    Yrep[i]~ dnorm(mean[i], tau)
+    resid[i]<-Y[i]-mean[i]
+    sresid2[i]<-resid[i]*resid[i]*tau
+    sresid2rep[i]<-(Yrep[i]-mean[i])*(Yrep[i]-mean[i])*tau
+  }
+    p.value<-step(sum(sresid2rep)-sum(sresid2))
+}
+",file=here("JAGS_mods","box6.1.txt"))
+res6.1<-jags(starling,
+             model.file=here("JAGS_mods","box6.1.txt"),
+             parameters.to.save=c("a","tau","resid","mean","p.value"),
+             n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+round(res6.1$BUGSoutput$summary[c("a[1]","a[2]","a[3]","a[4]","tau","p.value"),],2)
+gg1<-ggs(as.mcmc(res6.1))
+gg1<-filter(gg1,Parameter%in%c("a[1]","a[2]","a[3]","a[4]"))
+ggs_caterpillar(gg1)
+#plot residuals
+n<-nrow(starling)
+sumtab<-res6.1$BUGSoutput$summary
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("mean[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"])
+ggplot(dfcheck)+geom_point(aes(x=Predicted,y=Residual))+geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+ggplot(dfcheck,aes(sample=Residual))+geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+```
+
+## Box 6.1 Null for DIC comparison
+
+```{r}
+write("model   {     
+  a ~ dnorm(0.0, 1.0E-6)
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a
+    Y[i] ~ dnorm(mean[i], tau)  # mass drawn from a normal distribution
+  }
+}
+",file=here("JAGS_mods","box6.1null.txt"))
+res6.1null=jags(starling,
+                model.file=here("JAGS_mods","box6.1null.txt"),
+                parameters.to.save=c("a","tau"),
+                n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+res6.1$BUGSoutput$DIC
+res6.1$BUGSoutput$pD
+res6.1null$BUGSoutput$DIC
+res6.1null$BUGSoutput$pD
+dictab<-data.frame(Model=c("anova","null"),
+  DIC=round(c(res6.1$BUGSoutput$DIC,res6.1null$BUGSoutput$DIC),2),
+  pD=round(c(res6.1$BUGSoutput$pD,res6.1null$BUGSoutput$pD),2))
+dictab$deltaDIC<-dictab$DIC-min(dictab$DIC)
+dictab
+```
+
+
+## Treatment contrasts in R for comparison
+
+```{r}
+starling$location<-factor(starling$location)
+starlinglm<-lm(Y~location,data=starling)
+summary(starlinglm)
+starlinglm2<-lm(Y~location-1,data=starling)
+summary(starlinglm2)
+starling%>% group_by(location) %>% summarize(mean=mean(Y))
+#intercept/base is the first level
+starlingMatrix<-model.matrix(starlinglm)
+starlingMatrix
+
+```
+
+## Box 6.2 with treatment contrast
+
+```{r}
+write("model  {  # one-way ANOVA, using reference class
+  base ~ dnorm(0, 1.0E-6)  # the mean of the reference class
+  for (i in 1:3)  # the mean for first 3 locations, relative to the reference class
+  {
+    d[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  d[4] <- 0  # no diff b/t the mean of the 4th location and the reference class
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 bids sampled
+  {
+    mean[i] <- base + d[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+",file=here("JAGS_mods","box6.2.txt"))
+
+res6.2<-jags(starling,
+             model.file=here("JAGS_mods","box6.2.txt"),
+             parameters.to.save=c("base","d","tau"),
+             n.chains=2,n.iter=110000,n.burnin=10000,n.thin=5)
+round(res6.2$BUGSoutput$summary[c("base","d[1]","d[2]","d[3]","d[4]","tau"),],2)
+res6.2$BUGSoutput$DIC
+res6.2$BUGSoutput$pD
+gg2<-ggs(as.mcmc(res6.2))
+gg2<-filter(gg2,Parameter%in%c("base","d[1]","d[2]","d[3]"))
+ggs_caterpillar(gg2)
+ggs_pairs(gg2, lower=list(continuous="density"))
+```
+
+# Box 6.2 overparameterized to show why this is wrong. 
+
+```{r}
+write("model  {  # one-way ANOVA, with reference class wrong
+  base ~ dnorm(0, 1.0E-6)  # the mean of the reference class
+  for (i in 1:4)  # the mean each location, relative to the reference class
+  {
+    d[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 bids sampled
+  {
+    mean[i] <- base + d[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+",file=here("JAGS_mods","box6.2wrong.txt"))
+res6.2wrong=jags(starling,
+                 model.file=here("JAGS_mods","box6.2wrong.txt"),
+                 parameters.to.save=c("base","d","tau"),
+                 n.chains=2,n.iter=110000,n.burnin=10000,n.thin=5)
+round(res6.2wrong$BUGSoutput$summary[c("base","d[1]","d[2]","d[3]","d[4]","tau"),],2)
+gg2wrong<-ggs(as.mcmc(res6.2wrong))
+ggs_pairs(filter(gg2wrong,Parameter %in% c("base","d[1]","d[2]","d[3]","d[4]")))
+```
+
+## Contrasts in multi way ANOVA.
+
+```{r}
+starling2<-read.csv(here("data","starling.csv"))
+starling2$period<-factor(starling2$period)
+starling2$location<-factor(starling2$location)
+ggplot(starling2,aes(x=location,y=mass,color=factor(period),group=period))+
+  stat_summary()
+starlinglm2<-lm(mass~period*location,data=starling2)
+summary(starlinglm2)
+view(model.matrix(starlinglm2))
+```
+
+## Starling with interactions in JAGS
+
+```{r}
+write("model   
+{  # two-way ANOVA with interaction term, using reference classes
+  base ~ dnorm(0, 1.0E-6)
+  for (i in 1:3)  # the mean for each of the four locations, expressed as a difference from the reference class
+  {
+    a[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  a[4] <- 0
+# the mean for each of the two time periods, expressed as a difference from the reference class
+# the first time period is used as the reference class
+  b[1] <- 0
+  b[2] ~ dnorm(0.0, 1.0E-6)
+
+# interaction terms - these are set to zero for cases involving one or more reference classes
+  for (i in 1:3)  
+  {
+    int[i,1] <- 0
+    int[i, 2] ~ dnorm(0.0, 1.0E-6)
+  }
+  int[4,1] <- 0
+  int[4,2] <- 0
+
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+
+  for (i in 1:80) # for each of the 80 birds sampled
+  {
+    mean[i] <- base + a[location[i]] + b[period[i]] + int[location[i], period[i]] # the mean depends on the location and period
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+",file=here("JAGS_mods","box6.5.txt"))
+
+## Interactions initial values for 2 way anova
+starling2$Y<-starling2$mass
+res6.5<-jags(starling2[,c("Y","location","period")],
+             model.file=here("JAGS_mods","box6.5.txt"),
+  parameters.to.save=c("base","a","b","int","tau"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+round(res6.5$BUGSoutput$summary,2)
+```
+
+## Starling model without interactions
+
+```{r}
+write("model   
+{  # two-way ANOVA with no interaction term, using reference classes
+  
+  base ~ dnorm(0, 1.0E-6)
+  for (i in 1:3)  # the mean for each of the four locations, expressed as a difference from the reference class
+  {
+    a[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  a[4] <- 0
+# the mean for each of the two time periods, expressed as a difference from the reference class
+# the first time period is used as the reference class
+  b[1] <- 0
+  b[2] ~ dnorm(0.0, 1.0E-6)
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+
+  for (i in 1:80) # for each of the 80 birds sampled
+  {
+    mean[i] <- base + a[location[i]] + b[period[i]]  # the mean depends on the location and period
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+",file=here("JAGS_mods","box6.4.txt"))
+res6.4<-jags(starling2[,c("Y","location","period")],
+  model.file=here("JAGS_mods","box6.4.txt"),
+  parameters.to.save=c("base","a","b","tau"),n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+round(res6.4$BUGSoutput$summary,2)
+#DIC comparison
+dictab<-data.frame(Model=c("No interaction","Interaction"),
+ DIC=round(c(res6.4$BUGSoutput$DIC,res6.5$BUGSoutput$DIC),2),
+ pD=round(c(res6.4$BUGSoutput$pD,res6.5$BUGSoutput$pD),2)
+)
+dictab$deltaDIC<-dictab$DIC-min(dictab$DIC)
+dictab
+```
+
+## Two way interactions using model matrix and Stan
+
+```{r}
+matrixStarling2<-model.matrix(starlinglm2)
+starlingList<-list(N=nrow(matrixStarling2),
+  Ncoef=ncol(matrixStarling2),
+  Y=starling2$Y,
+  xMatrix=matrixStarling2
+)
+stanmatrix1<-stan(file=here("STAN_docs","box5.3matrix.stan"),
+  data=starlingList)
+print(stanmatrix1,pars=c("b","Sigma"))
+```
+
+## Starlings as random effect.
+
+```{r}
+write("model   {  # random effects one-way ANOVA
+   a ~ dnorm(0, 1.0E-6)  # a is the global mean mass
+  for (i in 1:4)  # the deviation from the global mean of the mean mass at each location 
+  {
+    d[i] ~ dnorm(0.0, tau_a)
+  }
+  sd_among ~ dunif(0, 100)  #variation among locations
+  tau_a <- 1/(sd_among*sd_among)  # convert sd to precision
+  sd_within ~ dunif(0, 100)  #  variation between starlings within locations
+  tau_w <- 1/(sd_within*sd_within)  # convert sd to precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a + d[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau_w)  # data drawn from normal dist'n
+  }}
+",file=here("JAGS_mods","box6.3.txt"))
+res6.3<-jags(starling,model.file=here("JAGS_mods","box6.3.txt"),
+  parameters.to.save=c("a","d","sd_among","sd_within"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+round(res6.3$BUGSoutput$summary[c("a","d[1]","d[2]","d[3]","d[4]","sd_among","sd_within"),],2)
+
+dictab<-data.frame(Model=c("random","null"),
+  DIC=round(c(res6.3$BUGSoutput$DIC,res6.1null$BUGSoutput$DIC),2),
+  pD=round(c(res6.3$BUGSoutput$pD,res6.1null$BUGSoutput$pD),2)) 
+dictab$deltaDIC<-dictab$DIC-min(dictab$DIC)
+dictab
+
+gg3<-ggs(as.mcmc(res6.3))
+gg3<-filter(gg3,Parameter %in% c("d[1]","d[2]","d[3]","d[4]"))
+ggs_caterpillar(gg3)
+
+```
+
+## Sleep study random effect
+
+```{r}
+library(lme4)
+ggplot(sleepstudy,aes(x=Days,y=Reaction))+
+  stat_smooth(aes(color=Subject,fill=Subject),method="lm")+
+  geom_point(aes(color=Subject))
+lmer1 <- lmer(Reaction ~ Days + (Days | Subject),data= sleepstudy)
+summary(lmer1)
+```
+
+Same in Stan
+
+```{r}
+write("
+data {
+  int<lower=0> N;
+  int<lower=0> Nsubject;
+  vector[N] y;
+  int subject[N];
+  vector[N] x;
+}
+parameters {
+  real interceptSigma;
+  real slopeSigma;
+  real<lower=0> errorSigma;
+  real alpha[Nsubject];
+  real beta[Nsubject];
+}
+model {
+  errorSigma ~ lognormal(0,10);
+  interceptSigma ~ lognormal(0,10);
+  slopeSigma ~ lognormal(0,10);
+  alpha~normal(0,interceptSigma);
+  beta~normal(0,slopeSigma);
+  for(i in 1:N) {
+   y ~ normal(alpha[subject[i]]+x[i]*beta[subject[i]], errorSigma);
+  }
+}
+
+  ",file=here("STAN_docs","randomEffects1.stan"))
+sleepList<-list(x=sleepstudy$Days,
+                y=sleepstudy$Reaction,
+                subject=as.numeric(factor(sleepstudy$Subject)),
+                N=nrow(sleepstudy),
+                Nsubject=length(unique(sleepstudy$Subject)))
+sleep1<-stan(file=here("STAN_docs","randomEffects1.stan"),
+             data=sleepList)
+print(sleep1)
+```
+
+```

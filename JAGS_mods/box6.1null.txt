@@ -1,0 +1,10 @@
+model   {     
+  a ~ dnorm(0.0, 1.0E-6)
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a
+    Y[i] ~ dnorm(mean[i], tau)  # mass drawn from a normal distribution
+  }
+}
+

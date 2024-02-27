@@ -1,0 +1,15 @@
+model  {  # one-way ANOVA, using reference class
+  base ~ dnorm(0, 1.0E-6)  # the mean of the reference class
+  for (i in 1:3)  # the mean for first 3 locations, relative to the reference class
+  {
+    d[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  d[4] <- 0  # no diff b/t the mean of the 4th location and the reference class
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+  for (i in 1:40) # for each of the 40 bids sampled
+  {
+    mean[i] <- base + d[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+

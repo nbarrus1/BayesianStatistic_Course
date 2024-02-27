@@ -1,0 +1,31 @@
+model   
+{  # two-way ANOVA with interaction term, using reference classes
+  base ~ dnorm(0, 1.0E-6)
+  for (i in 1:3)  # the mean for each of the four locations, expressed as a difference from the reference class
+  {
+    a[i] ~ dnorm(0.0, 1.0E-6)
+  }
+  a[4] <- 0
+# the mean for each of the two time periods, expressed as a difference from the reference class
+# the first time period is used as the reference class
+  b[1] <- 0
+  b[2] ~ dnorm(0.0, 1.0E-6)
+
+# interaction terms - these are set to zero for cases involving one or more reference classes
+  for (i in 1:3)  
+  {
+    int[i,1] <- 0
+    int[i, 2] ~ dnorm(0.0, 1.0E-6)
+  }
+  int[4,1] <- 0
+  int[4,2] <- 0
+
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+
+  for (i in 1:80) # for each of the 80 birds sampled
+  {
+    mean[i] <- base + a[location[i]] + b[period[i]] + int[location[i], period[i]] # the mean depends on the location and period
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+

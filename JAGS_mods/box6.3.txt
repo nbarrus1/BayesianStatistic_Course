@@ -1,0 +1,16 @@
+model   {  # random effects one-way ANOVA
+   a ~ dnorm(0, 1.0E-6)  # a is the global mean mass
+  for (i in 1:4)  # the deviation from the global mean of the mean mass at each location 
+  {
+    d[i] ~ dnorm(0.0, tau_a)
+  }
+  sd_among ~ dunif(0, 100)  #variation among locations
+  tau_a <- 1/(sd_among*sd_among)  # convert sd to precision
+  sd_within ~ dunif(0, 100)  #  variation between starlings within locations
+  tau_w <- 1/(sd_within*sd_within)  # convert sd to precision
+  for (i in 1:40) # for each of the 40 birds sampled
+  {
+    mean[i] <- a + d[location[i]]  # the mean depends on the location
+    Y[i] ~ dnorm(mean[i], tau_w)  # data drawn from normal dist'n
+  }}
+
