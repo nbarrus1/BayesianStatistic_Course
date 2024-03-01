@@ -1,0 +1,498 @@
+---
+title: "HW5_GLMs"
+author: "N. Barrus"
+date: "2024-02-29"
+output: pdf_document
+---
+
+## Purpose:
+
+The purpose of this markdown document is to work through Homework 6 in Dr. Babcock's Bayesian Statistics Course at the University of Miami. Homework 6 deals with general lineral modelling.
+
+## General Start to Code
+
+```{r}
+
+rm(list = ls())
+
+######github#####
+#note, only needed after 90 days from 1/16/2024
+
+#  usethis::create_github_token()  
+#  gitcreds::gitcreds_set()
+
+#####check for r updates#####
+#note, updateing may take some time so plan accordingly
+
+#require(installr)
+
+#check.for.updates.R()
+
+#updateR() #only if needed
+
+#######check for package updates#####
+#note, updateing may take some time so plan accordingly
+
+#old.packages()
+
+# update.packages() #make the decision to the update the packages
+
+```
+
+## Load packages
+
+```{r, results='hide'}
+
+library(tidyverse)
+library(R2jags)
+library(rstan)
+library(ggmcmc)
+library(purrr)
+library(magrittr)
+library(here)
+library(loo)
+library(DHARMa)
+theme_set(theme_bw(base_size=15))
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+## Data  
+
+shark.csv is the presence or absence of accoustically tagged sharks at monitors in Belize, with habitat type (coded as integers) and the log distance (lnDist) from the shark's tagging location to the monitor.
+
+mortality.csv is from a meta analysis of fish mortality rates by Amy Then et al., https://academic.oup.com/icesjms/article/72/1/82/2804320  the response variable is natural mortality (M), and the predictor variables are the growth rate (K), maximum length (Linf), longevity (tmax), and temperature (temp).  
+
+```{r}
+
+z.score <- function(.var) {
+  z.score <- (.var-mean(.var))/sd(.var)
+  z.score
+}
+
+
+shark.data <- read_csv(here("data","shark.csv")) |> 
+  mutate(z.lnDist = z.score(lnDist))
+  
+
+head(shark.data)
+
+
+
+mortality.data <- read_csv(here("data","Mortality.csv")) |> 
+  mutate(z.K = z.score(K),
+         z.Linf = z.score(Linf),
+         z.tmax = z.score(tmax),
+         z.temp = z.score(Temp))
+
+head(mortality.data)
+
+```
+
+## Problem 1: Binomial GLM/Logistic model of mortality
+
+#### In this problem we will create a stan model to fit a logistic regression to the shark presence/absence data.  
+
+#### A)	Fit a logistic regression model (similar to McCarthy box 5.8), with a logit link, to these data, with only the explanatory variable lnDist (minus its mean and divided by its standard deviation).  Show the summary statistics for the regression coefficients and check for convergence.   
+
+
+*write and run the model*  
+
+
+```{r}
+
+write("model
+{
+#uniformative priors
+a ~ dnorm(0,1.0E-6)  #intercept term
+b ~ dnorm(0,1.0E-6)  #regression coefficents
+
+      
+for (i in 1:N)
+{
+logit(p[i]) <- a + b*x[i]
+y[i] ~ dbern(p[i])
+resid[i] <- y[i]-p[i]
+
+simval[i] ~dbern(p[i])
+
+}
+}
+", file = here("JAGS_mods","HW6_A_logisticregression.txt"))
+
+shark.data.list = list(y = shark.data$present,
+                       x = shark.data$z.lnDist,
+                       N = length(shark.data$present))
+
+shark.jags <- jags(shark.data.list,parameters.to.save = c("p","a","b","resid","simval"),
+                   model.file = here("JAGS_mods","HW6_A_logisticregression.txt"),
+                   n.chains = 2, n.iter = 110000, n.burnin = 10000,
+                   n.thin = 2)
+```
+
+  
+*check coefficient summaries and convergence*
+
+
+```{r}
+range(shark.jags$BUGSoutput$summary[,"Rhat"])
+range(shark.jags$BUGSoutput$summary[,"n.eff"])
+
+
+shark.jags$BUGSoutput$summary[c("a","b"),]
+```
+
+
+
+#### B)	Now fit a model with lnDist and the habitat variable and their interaction, equivalent to glm(shark~lnDist*habitat) in R.  Give the summaries of the parameters and check for convergence.  
+
+*write and run the model*  
+
+
+```{r}
+
+write("model
+{
+#uniformative priors
+a ~ dnorm(0,1.0E-6)  #intercept term
+
+for(i in 1:3)
+{
+b[i] ~ dnorm(0,1.0E-6)  #regression coefficents
+}
+      
+for (i in 1:N)
+{
+logit(p[i]) <- a + b[1]*x.lndist[i] + b[2]*x.hab[i] + b[3]*x.lndist[i]*x.hab[i]
+y[i] ~ dbern(p[i])
+resid[i] <- y[i]-p[i]
+
+simval[i] ~dbern(p[i])
+
+}
+}
+", file = here("JAGS_mods","HW6_B_logisticregression.txt"))
+
+shark.data.list = list(y = shark.data$present,
+                       x.lndist = shark.data$z.lnDist,
+                       x.hab = shark.data$habitat,
+                       N = length(shark.data$present))
+
+shark.jags.2 <- jags(shark.data.list,parameters.to.save = c("p","a","b","resid","simval"),
+                   model.file = here("JAGS_mods","HW6_B_logisticregression.txt"),
+                   n.chains = 2, n.iter = 110000, n.burnin = 10000,
+                   n.thin = 2)
+```
+
+*check coefficient summaries and convergence*
+
+
+```{r}
+range(shark.jags.2$BUGSoutput$summary[,"Rhat"])
+range(shark.jags.2$BUGSoutput$summary[,"n.eff"])
+
+
+shark.jags.2$BUGSoutput$summary[c("a","b[1]","b[2]","b[3]"),]
+```
+
+  
+
+#### C)	Calculate WAIC for both models. Which model is preferable according to WAIC and what is deltaWAIC for the other model? 
+
+
+   *create WAIC table*
+   
+```{r}
+
+
+DIC.table <- tibble(model = c("LR-dist", "LR-dist*hab"),
+                    model.ls = c(list(shark.jags), list(shark.jags.2))) |> 
+  mutate(DIC = map_dbl(model.ls, c(2,24)),
+         pD = map_dbl(model.ls, c(2,23)),
+         deltaDIC = DIC - min(DIC),
+         weight = round(exp(-2*deltaDIC)/sum(exp(-2*deltaDIC)),digits = 5))
+
+DIC.table |> select(-model.ls) |> knitr::kable(caption = "DIC Table")
+
+
+```
+
+  
+  I was unsure how to calculate the LL for the model, so I was unable to select the best WAIC model, but the DIC model selected for the interaction model.  The delta DIC was 2.397   
+
+#### D)	For the WAIC best model, show the confusion matrix. What fraction of predictions were correct, assuming that a predicted probability of presence greater than 0.5 is predicted presence? 
+
+```{r}
+n <- dim(shark.data)[1]
+prows<-paste0("p[",1:n,"]")
+shark.data$p <- shark.jags.2$BUGSoutput$summary[prows,"mean"]
+
+
+confusion <- table(round(shark.data$p),shark.data$present)
+confusion
+
+
+(confusion[1,1]+confusion[2,2])/sum(confusion)
+```
+
+  
+78.9% of predictions were correct.  
+
+#### E)	For the WAIC best model, calculate the DHARMa residuals, and show the resulting plot. Does the model fit adequately? 
+
+```{r}
+
+#DHARMa residuals. 
+simval<-t(shark.jags.2$BUGSoutput$sims.matrix[,paste0("simval[",1:nrow(shark.data),"]")])
+dim(simval)
+simval<-simval[,sample(1:80000,500)]
+DHARMaRes = createDHARMa(simulatedResponse =simval , observedResponse = shark.data$present, 
+             fittedPredictedResponse = shark.data$p, integerResponse = T)
+plot(DHARMaRes)
+
+```
+  
+The model fit looks adequate.
+
+## Problem 2: Normal and log normal
+
+#### A)	Using matrix format, set up a multiple regression to predict M from these 4 variables (just main effects, no interactions or quadratic terms). Use a normal likelihood. Give the regression coefficients, residual standard deviation, Bayesian P value, Rhat and n.eff.    
+
+*set up matrix*
+
+```{r}
+mortality.data
+
+fit1 <- lm(M~z.K+z.Linf+z.tmax+z.temp, data = mortality.data)
+mort.matrix <- model.matrix(fit1)
+
+head(mort.matrix)
+```
+  
+*write and run the model*
+
+```{r}
+write("model
+      {
+      #uniformative priors
+      for(i in 1:Ncoef)
+      {
+      b[i] ~ dnorm(0,1.0E-6)
+      }
+      prec ~ dgamma(0.001, 0.001)
+      
+      #model
+      for (i in 1:N)
+      {
+      ymean[i] <- inprod(b,xMatrix[i,])
+      y[i] ~ dnorm(ymean[i],prec)
+      
+      pred.obs[i]~dnorm(ymean[i],prec)   # Predicted Y value
+      resid[i]<-y[i]-ymean[i] #residuals
+      sresid[i]<-(y[i]-ymean[i])*sqrt(prec) #standardized residual
+      sresid2[i]<-sresid[i]*sresid[i]  #pearson residual squared
+      rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+      LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(y[i]-ymean[i])*(y[i]-ymean[i])
+      }
+      
+      #other quantities
+      resid.sd <- sd(resid[])
+      chi.square.obs<-sum(sresid2[])
+      chi.square.rep<-sum(rep.sresid2[])
+      p.value<-step(chi.square.obs-chi.square.rep)
+      
+      }", here("JAGS_mods","HW6_2a_matrixNormal.txt"))
+
+mortality.list <- list(y = mortality.data$M,
+                       xMatrix = mort.matrix,
+                       Ncoef = 5,
+                       N = length(mortality.data$M))
+
+HW6_matrixNormal_jags <- jags(mortality.list,
+                              model.file = here("JAGS_mods","HW6_2a_matrixNormal.txt"),
+                              parameters.to.save = c("b","prec","resid.sd","p.value",
+                                                     "resid","sresid","LL","chi.square.obs",
+                                                     "chi.square.rep","ymean"),
+                              n.chains=2,n.thin=10,n.iter=110000,n.burnin=10000)
+
+range(HW6_matrixNormal_jags$BUGSoutput$summary[,"Rhat"])
+range(HW6_matrixNormal_jags$BUGSoutput$summary[,"n.eff"])
+
+HW6_matrixNormal_jags$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","resid.sd","p.value"),]
+
+```
+
+
+
+#### B)	Do the same model with a lognormal likelihood with everything else the same (i.e. predict the log scale mean from the linear model, logmean = x*b). Give the regression coefficients, residual standard deviation, Bayesian P value, Rhat and n.eff  
+
+
+```{r}
+write("model
+      {
+      #uniformative priors
+      for(i in 1:Ncoef)
+      {
+      b[i] ~ dnorm(0,1.0E-6)
+      }
+      prec ~ dgamma(0.001, 0.001)
+      
+      #model
+      for (i in 1:N)
+      {
+      ymean[i] <- inprod(b,xMatrix[i,])
+      y[i] ~ dlnorm(ymean[i],prec)
+      
+      pred.obs[i]~dlnorm(ymean[i],prec)   # Predicted Y value
+      resid[i]<-y[i]-ymean[i] #residuals
+      sresid[i]<-(y[i]-ymean[i])*sqrt(prec) #standardized residual
+      sresid2[i]<-sresid[i]*sresid[i]  #pearson residual squared
+      rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+      LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(y[i]-ymean[i])*(y[i]-ymean[i])
+      }
+      
+      #other quantities
+      resid.sd <- sd(resid[])
+      chi.square.obs<-sum(sresid2[])
+      chi.square.rep<-sum(rep.sresid2[])
+      p.value<-step(chi.square.obs-chi.square.rep)
+      
+      }", here("JAGS_mods","HW6_2b_matrixLogNormal.txt"))
+
+mortality.list <- list(y = mortality.data$M,
+                       xMatrix = mort.matrix,
+                       Ncoef = 5,
+                       N = length(mortality.data$M))
+
+HW6_matrixLogNormal_jags <- jags(mortality.list,
+                              model.file = here("JAGS_mods","HW6_2b_matrixLogNormal.txt"),
+                              parameters.to.save = c("b","prec","resid.sd","p.value",
+                                                     "resid","sresid","LL","chi.square.obs",
+                                                     "chi.square.rep","ymean"),
+                              n.chains=2,n.thin=10,n.iter=110000,n.burnin=10000)
+
+range(HW6_matrixLogNormal_jags$BUGSoutput$summary[,"Rhat"])
+range(HW6_matrixLogNormal_jags$BUGSoutput$summary[,"n.eff"])
+
+HW6_matrixLogNormal_jags$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","resid.sd","p.value"),]
+
+```
+
+#### C)	Plot the residuals for both models.  Which seems to fit best?   
+
+*plot the residuals for the normal model*  
+
+```{r}
+n<-length(mortality.data$M)
+sumtab<-HW6_matrixNormal_jags$BUGSoutput$summary
+residrows<-paste0("resid[",1:n,"]")
+sresidrows<-paste0("sresid[",1:n,"]")
+meanrows<-paste0("ymean[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"],
+  SResid=sumtab[sresidrows,"mean"])
+ggplot(dfcheck)+geom_point(aes(x=Predicted,y=Residual))+geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+ggplot(dfcheck)+geom_point(aes(x=Predicted,y=SResid))+geom_abline(intercept=0,slope=0) +ylab("Standardized residual")+ggtitle("Standardized residuals")
+ggplot(dfcheck,aes(sample=Residual))+geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+ggplot(dfcheck,aes(x=SResid))+geom_histogram(binwidth=.2)+xlab("Standardize residuals")+ggtitle("Histogram of residuals")
+```
+
+
+*plot the residuald for the log normal model*
+
+```{r}
+n<-length(mortality.data$M)
+sumtab<-HW6_matrixLogNormal_jags$BUGSoutput$summary
+residrows<-paste0("resid[",1:n,"]")
+sresidrows<-paste0("sresid[",1:n,"]")
+meanrows<-paste0("ymean[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"],
+  SResid=sumtab[sresidrows,"mean"])
+ggplot(dfcheck)+geom_point(aes(x=Predicted,y=Residual))+geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+ggplot(dfcheck)+geom_point(aes(x=Predicted,y=SResid))+geom_abline(intercept=0,slope=0) +ylab("Standardized residual")+ggtitle("Standardized residuals")
+ggplot(dfcheck,aes(sample=Residual))+geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+ggplot(dfcheck,aes(x=SResid))+geom_histogram(binwidth=.2)+xlab("Standardize residuals")+ggtitle("Histogram of residuals")
+```
+
+  
+According to these residual plots that I have, the normal model was the best fitting model. But, I would note that I think that the way I set up the lognormal model was wrong because I would have expected the log nomormal model to improve the residuals based on the normal residual plot. 
+
+#### D)	Calculate WAIC for both models. Which model is preferable according to WAIC and what is deltaWAIC for the other model? Is the WAIC best model the same one that looked best from the residuals?   
+
+```{r}
+n<-length(mortality.data$M)
+waic.table <- tibble(model = c("normal","lognormal"),
+                     waic = c(            waic(HW6_matrixNormal_jags$BUGSoutput$sims.matrix[,paste0("LL[",1:n,"]")])$estimate[3,1],
+waic(HW6_matrixLogNormal_jags$BUGSoutput$sims.matrix[,paste0("LL[",1:n,"]")])$estimate[3,1])) |> 
+  mutate(deltWAIC = waic-min(waic),
+         weight = round(exp(-2*deltWAIC)/sum(exp(-2*deltWAIC)),digits = 5))
+
+waic.table |> knitr::kable(caption = "WAIC Table")
+```
+
+  
+The normal model was preferred by using WAIC. It did reflect what I saw in the residual plots, but again I think the model specification was incorrect for the log normal model.  
+
+#### E)	Now run the normal model with log(M) as the response variable.  Give the regression coefficients, residual standard deviation, Bayesian P value, Rhat and n.eff and WAIC.  Do you get the same parameter values that you got with the lognormal likelihood in part b?  Do you get the same WAIC? Why or why not?
+
+```{r}
+write("model
+      {
+      #uniformative priors
+      for(i in 1:Ncoef)
+      {
+      b[i] ~ dnorm(0,1.0E-6)
+      }
+      prec ~ dgamma(0.001, 0.001)
+      
+      #model
+      for (i in 1:N)
+      {
+      ymean[i] <- inprod(b,xMatrix[i,])
+      logy[i] ~ dnorm(ymean[i],prec)
+      
+      #pred.obs[i]<-exp(ymean[i]+1/(2*prec))   # Predicted Y value
+      #resid[i]<-y[i]-ymean[i] #residuals
+      #sresid[i]<-(y[i]-ymean[i])*sqrt(prec) #standardized residual
+     # sresid2[i]<-sresid[i]*sresid[i]  #pearson residual squared
+     #rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+      #LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(y[i]-ymean[i])*(y[i]-ymean[i])
+      }
+      
+      #other quantities
+      #resid.sd <- sd(resid[])
+      #chi.square.obs<-sum(sresid2[])
+      #chi.square.rep<-sum(rep.sresid2[])
+      #p.value<-step(chi.square.obs-chi.square.rep)
+      
+      }", here("JAGS_mods","HW6_2e_matrixLogY.txt"))
+
+mortality.list <- list(y = mortality.data$M,
+                       xMatrix = mort.matrix,
+                       Ncoef = 5,
+                       N = length(mortality.data$M))
+
+#HW6_matrixLogNormal_jags <- jags(mortality.list,
+#                              model.file = here("JAGS_mods","HW6_2e_matrixLogY.txt"),
+#                              parameters.to.save = c("b","prec","resid.sd","p.value",
+#                                                     "resid","sresid","LL","chi.square.obs",
+#                                                     "chi.square.rep","ymean"),
+#                              n.chains=2,n.thin=10,n.iter=110000,n.burnin=10000)
+
+#range(HW6_matrixLogNormal_jags$BUGSoutput$summary[,"Rhat"])
+#range(HW6_matrixLogNormal_jags$BUGSoutput$summary[,"n.eff"])
+
+#HW6_matrixLogNormal_jags$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","resid.sd","p.value"),]
+
+```
+
+  
+I am unsure how to specify this model as well, particularly when finding the predicted values.  Becaue of this I was unable to provide the regression coefficients, residual standard deviation, Bayesian P value, Rhat and n.eff and WAIC.  The coeficients should have been similar to the lognormal coeficients and the WAIC should have been smaller. But the smaller WAIC was incorrect because the likelihoods are different because the response variables is on different scales
+
+
+```{r, eval=FALSE, include=FALSE}
+rmarkdown::render(input = here("scripts","HW6_glms.Rmd"),
+                  output_file = here("renders","HW6_glms.pdf"),
+                  output_format = "pdf_document")
+```

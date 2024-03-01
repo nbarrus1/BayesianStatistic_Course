@@ -1,0 +1,18 @@
+model
+{
+#uniformative priors
+a ~ dnorm(0,1.0E-6)  #intercept term
+b ~ dnorm(0,1.0E-6)  #regression coefficents
+
+      
+for (i in 1:N)
+{
+logit(p[i]) <- a + b*x[i]
+y[i] ~ dbern(p[i])
+resid[i] <- y[i]-p[i]
+
+simval[i] ~dbern(p[i])
+
+}
+}
+

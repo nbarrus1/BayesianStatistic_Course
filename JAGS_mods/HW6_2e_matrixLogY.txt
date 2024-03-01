@@ -1,0 +1,30 @@
+model
+      {
+      #uniformative priors
+      for(i in 1:Ncoef)
+      {
+      b[i] ~ dnorm(0,1.0E-6)
+      }
+      prec ~ dgamma(0.001, 0.001)
+      
+      #model
+      for (i in 1:N)
+      {
+      ymean[i] <- inprod(b,xMatrix[i,])
+      logy[i] ~ dnorm(ymean[i],prec)
+      
+      #pred.obs[i]<-exp(ymean[i]+1/(2*prec))   # Predicted Y value
+      #resid[i]<-y[i]-ymean[i] #residuals
+      #sresid[i]<-(y[i]-ymean[i])*sqrt(prec) #standardized residual
+     # sresid2[i]<-sresid[i]*sresid[i]  #pearson residual squared
+     #rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+      #LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(y[i]-ymean[i])*(y[i]-ymean[i])
+      }
+      
+      #other quantities
+      #resid.sd <- sd(resid[])
+      #chi.square.obs<-sum(sresid2[])
+      #chi.square.rep<-sum(rep.sresid2[])
+      #p.value<-step(chi.square.obs-chi.square.rep)
+      
+      }
