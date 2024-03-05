@@ -10,6 +10,7 @@ You must install INLAutils with devtools
 
 ```{r, message=FALSE}
 #devtools::install_github('timcdlucas/INLAutils')
+library(INLAutils)
 library(INLA)
 library(R2jags)
 library(tidyverse)
@@ -69,11 +70,11 @@ generated quantities {
   }
 }
 
-",file="regressionOnly1.stan")
+",file=here("STAN_docs", "regressionOnly1.stan"))
 sleepList0<-list(x=sleepstudy$Days,
                 y=sleepstudy$Reaction,
                 N=nrow(sleepstudy))
-sleep0<-stan(file="regressionOnly1.stan",
+sleep0<-stan(file=here("STAN_docs", "regressionOnly1.stan"),
   data=sleepList0)
 print(sleep0,pars=c("alpha","beta","errorSigma"))
 ggsSleep0<-ggs(sleep0)
@@ -116,7 +117,7 @@ generated quantities {
   }
 }
 
-",file="randomEffects1.stan")
+",file=here("STAN_docs","randomEffects1.stan"))
 
 sleepList<-list(x=sleepstudy$Days,
                 y=sleepstudy$Reaction,
@@ -124,7 +125,7 @@ sleepList<-list(x=sleepstudy$Days,
                 N=nrow(sleepstudy),
                 Nsubject=length(unique(sleepstudy$Subject)))
 
-sleep1<-stan(file="randomEffects1.stan",
+sleep1<-stan(file=here("STAN_docs","randomEffects1.stan"),
              data=sleepList,refresh=0)
 print(sleep1,pars=c("interceptSigma","interceptMu","errorSigma","beta"))
 ggsSleep1<-ggs(sleep1)
@@ -170,9 +171,9 @@ generated quantities {
   }
 }
 
-  ",file="randomEffects2.stan")
+  ",file=here("STAN_docs", "randomEffects2.stan"))
 
-sleep2<-stan(file="randomEffects2.stan",
+sleep2<-stan(file=here("STAN_docs", "randomEffects2.stan"),
              data=sleepList,refresh=0)
 print(sleep2,par=c("interceptSigma","errorSigma","slopeSigma",
   "interceptMu","slopeMu"))

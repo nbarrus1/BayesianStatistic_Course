@@ -1,0 +1,421 @@
+---
+title: "Homework 6"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,echo=FALSE,message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(DHARMa)
+library(rstan)
+library(loo)
+library(gridExtra)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+
+```
+
+
+## 6.1 Binomial model with sharks. 
+## a Distance only
+
+```{r}
+shark<-read.csv("shark.csv")
+summary(shark)
+
+write("model  
+{
+ a~dnorm(0,1.0E-6)
+ b~dnorm(0,1.0E-6)
+for(i in 1:N)  {
+  logit(p[i])<-a+b*x[i]
+  present[i]~dbern(p[i])
+  LL[i]<-log(present[i]*p[i]+(1-present[i])*(1-p[i]))
+  simval[i]~dbern(p[i])
+}
+}
+",file="Model6.1a.txt")
+
+sharkList<-list(present=shark$present,
+  x=(shark$lnDist-mean(shark$lnDist))/sd(shark$lnDist),
+  N=nrow(shark))
+res6.1a<-jags(sharkList,model.file="Model6.1a.txt",
+  parameters.to.save=c("a","b","p","LL","simval"),
+  n.chains=2,n.iter=100000,n.burnin=10000,n.thin=4)
+round(res6.1a$BUGSoutput$summary[c("a","b"),],2)
+```
+
+## b. With habitat 
+
+Note, I didn't specify whether to make habitat a number or a categorical variable, 
+so I've run it both ways here. 
+
+```{r}
+write("model  
+{
+ a~dnorm(0,1.0E-4)
+for(i in 1:3) {
+ b[i]~dnorm(0,1.0E-4)
+} 
+for(i in 1:N)  {
+  logit(p[i])<-a+b[1]*x[i]+b[2]*habitat[i]+b[3]*habitat[i]*x[i]
+  present[i]~dbern(p[i])
+  LL[i]<-log(present[i]*p[i]+(1-present[i])*(1-p[i]))
+  simval[i]~dbern(p[i])
+}
+}
+",file="Model6.1bNumber.txt")
+
+sharkList<-list(present=shark$present,
+  x=(shark$lnDist-mean(shark$lnDist))/sd(shark$lnDist),
+  N=nrow(shark),
+  habitat=shark$habitat)
+res6.1bNum<-jags(sharkList,
+  model.file="Model6.1b.txt",
+  parameters.to.save=c("a","b","p","LL","simval"),
+  n.chains=2,n.iter=100000,n.burnin=10000,n.thin=4)
+round(res6.1bNum$BUGSoutput$summary[c("a","b[1]","b[2]","b[3]"),],2)
+
+write("model  
+{
+for(i in 1:3) {
+ a[i]~dnorm(0,1.0E-4)
+ b[i]~dnorm(0,1.0E-4)
+} 
+for(i in 1:N)  {
+  logit(p[i])<-a[habitat[i]]+b[habitat[i]]*x[i]
+  present[i]~dbern(p[i])
+  LL[i]<-log(present[i]*p[i]+(1-present[i])*(1-p[i]))
+  simval[i]~dbern(p[i])
+}
+}
+",file="Model6.1bCat.txt")
+
+sharkList<-list(present=shark$present,
+  x=(shark$lnDist-mean(shark$lnDist))/sd(shark$lnDist),
+  N=nrow(shark),
+  habitat=shark$habitat)
+res6.1bCat<-jags(sharkList,
+  model.file="Model6.1bCat.txt",
+  parameters.to.save=c("a","b","p","LL","simval"),
+  n.chains=2,n.iter=100000,n.burnin=10000,n.thin=4)
+round(res6.1bCat$BUGSoutput$summary[c("a[1]","a[2]","a[3]","b[1]","b[2]","b[3]"),],2)
+```
+
+## c.WAIC
+```{r}
+LLa<-res6.1a$BUGSoutput$sims.matrix[,paste0("LL[",1:sharkList$N,"]")]
+waica<-waic(LLa)$estimate
+LLb<-res6.1bNum$BUGSoutput$sims.matrix[,paste0("LL[",1:sharkList$N,"]")]
+waicb<-waic(LLb)$estimate
+LLc<-res6.1bCat$BUGSoutput$sims.matrix[,paste0("LL[",1:sharkList$N,"]")]
+waicc<-waic(LLc)$estimate
+waica
+waicb
+waicc
+```
+
+The WAIC prefers the model with the habitat if habitat is a number, but not if habitat is a category.
+
+
+##. d. confusion table
+```{r}
+p.pred<-res6.1bNum$BUGSoutput$summary[paste0("p[",1:nrow(shark),"]"),"mean"]
+confusion<-table(round(p.pred),shark$present)
+dimnames(confusion) <-list(c("Predict present","Predict absent"),c("Present","Absent"))
+confusion
+fraction.correct<-
+(confusion[1,1]+confusion[2,2])/sum(confusion)
+round(fraction.correct,2)
+```
+
+The model with habitat only got `r round(fraction.correct,2)*100`% of the presence/absence predictions correct. 
+
+## e. DHARMa residuals
+
+```{r}
+simval<-t(res6.1bNum$BUGSoutput$sims.matrix[,paste0("simval[",1:nrow(shark),"]")])
+dim(simval)
+simval<-simval[,sample(1:ncol(simval),500)]
+DHARMaRes<-createDHARMa(simulatedResponse =simval , 
+  observedResponse = shark$present, 
+  fittedPredictedResponse = p.pred, 
+  integerResponse = TRUE)
+plot(DHARMaRes)
+
+```
+
+The DHARMa residuals look fine. The QQ plot shows the points along the line, and the residuals are spread between 0 and 1 in the plot on the right. 
+
+## 2. Normal and lognormal
+
+```{r}
+mortality<-read.csv("mortality.csv")
+summary(mortality)
+dim(mortality)
+```
+
+## a Normal
+
+I didn't specify whether to standardize the variables, so I'm showing the results both ways. I also did it both in Stan and Jags. 
+
+```{r}
+#Stan version
+write("
+data{
+ int N;
+ int Ncoef;
+ vector[N] Y;
+ matrix[N,Ncoef] xMatrix;
+}
+parameters{
+ vector[Ncoef] b;
+ real<lower=0> sigma;
+}
+model{
+  b~normal(0,10);
+  sigma~exponential(1);
+  Y~normal(xMatrix*b,sigma);
+}
+generated quantities {
+  real chi2dat;
+  real chi2sim;
+  real pvalue;
+  real ymean[N];
+  real resid[N];
+  real ypred[N];
+  real pearsondat[N];
+  real pearsonsim[N];
+  real loglik[N];
+  for (i in 1:N)  {
+    ymean[i] = xMatrix[i,]*b;
+    resid[i] = Y[i]-ymean[i];
+    ypred[i] = normal_rng(ymean[i], sigma); 
+    pearsondat[i] = (Y[i]-ymean[i])/sigma;
+    pearsonsim[i] = (ypred[i]-ymean[i])/sigma;
+    loglik[i] = normal_lpdf(Y[i]|ymean[i],sigma);
+  }
+  chi2dat = sum(pearsondat^2);
+  chi2sim = sum(pearsonsim^2);
+  pvalue = chi2dat>chi2sim;
+}
+",file="RegressionMatrix.stan")
+
+#Jags version
+write("model{
+for(i in 1:Ncoef){
+  b[i]~dnorm(0,1.0E-6)
+}  
+  sigma~dexp(1)
+  tau<-1/sigma^2
+for(i in 1:N) {  
+  ymean[i] <- inprod(xMatrix[i,],b)
+  Y[i]~dnorm(ymean[i],tau)
+  resid[i] <- Y[i]-ymean[i]
+  ypred[i] ~ dnorm(ymean[i], tau) 
+  pearsondat[i] <- (Y[i]-ymean[i])/sigma
+  pearsonsim[i] <- (ypred[i]-ymean[i])/sigma
+  loglik[i] <- -0.5*log(2*3.14159)+0.5*log(tau)-0.5*tau*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+}
+  chi2dat <- sum(pearsondat^2)
+  chi2sim <- sum(pearsonsim^2)
+  pvalue <- chi2dat>chi2sim
+  dev <- -2*sum(loglik[])
+}
+",file="RegressionMatrix.jags")
+
+
+#Standardize X variables if desired
+
+mortalityStandardized<-mortality %>% mutate(across(K:Temp,~(.x-mean(.x))/sd(.x)))
+MmatrixStandardized<-model.matrix(lm(M~K+Linf+tmax+Temp,data=mortalityStandardized))
+head(MmatrixStandardized)
+MlistStandarized<-list(Y=mortality$M,
+  xMatrix=MmatrixStandardized,
+  N=nrow(MmatrixStandardized),
+  Ncoef=ncol(MmatrixStandardized))
+
+#Standardized in stan
+MnormalStandardized<-stan(file="RegressionMatrix.stan",
+  data=MlistStandarized)
+print(MnormalStandardized,pars=c("sigma","b","pvalue"))
+
+#Not standardized in stan
+Mmatrix<-model.matrix(lm(M~K+Linf+tmax+Temp,data=mortality))
+head(Mmatrix)
+Mlist<-list(Y=mortality$M,
+  xMatrix=Mmatrix,
+  N=nrow(Mmatrix),
+  Ncoef=ncol(Mmatrix))
+
+Mnormal<-stan(file="RegressionMatrix.stan",
+  data=Mlist,refresh=0)
+print(Mnormal,pars=c("sigma","b","pvalue"))
+
+#Standardized in jags
+MnormalStandardizedJags<-jags(MlistStandarized,
+  model.file="RegressionMatrix.jags",
+  parameters.to.save=c("b","loglik","sigma","chi2dat","chi2sim","pvalue","dev"),
+  n.iter = 100000, n.thin=4,n.burnin = 10000)
+round(MnormalStandardizedJags$BUGSoutput$summary[c("sigma","b[1]","b[2]","b[3]","b[4]","b[5]",
+                                                   "pvalue","dev","deviance"),],2)
+
+```
+Note that we get the same values in Stan and Jags, if the variables are standardized. Not standardizing the variables of course changes the values of the coefficients, but the model fit is similar. Note that I calculated the deviance from the log likelihood to double check that I calculated it correctly in Jags. 
+
+## b lognormal
+
+For the lognormal, you have to remember to calculate the residuals in the log scale. Also, if you calculated the log likelihood "by hand" as you have to do in Jags, note that you have to add another -log(y) term in the likelihood.
+
+```{r}
+#Stan version
+
+write("
+data{
+ int N;
+ int Ncoef;
+ vector<lower=0>[N] Y;
+ matrix[N,Ncoef] xMatrix;
+}
+parameters{
+ vector[Ncoef] b;
+ real<lower=0> sigma;
+}
+model{
+  b~normal(0,10);
+  sigma~exponential(1);
+  Y~lognormal(xMatrix*b,sigma);
+}
+
+generated quantities {
+  real chi2dat;
+  real chi2sim;
+  real pvalue;
+  real logymean[N];
+  real resid[N];
+  real ypred[N];
+  real pearsondat[N];
+  real pearsonsim[N];
+  real loglik[N];
+  for (i in 1:N)  {
+    logymean[i] = xMatrix[i,]*b;
+    resid[i] = log(Y[i])-logymean[i];
+    ypred[i] = lognormal_rng(logymean[i], sigma); 
+    pearsondat[i] = (log(Y[i])-logymean[i])/sigma;
+    pearsonsim[i] = (log(ypred[i])-logymean[i])/sigma;
+    loglik[i] = lognormal_lpdf(Y[i]|logymean[i],sigma);
+  }
+  chi2dat = sum(pearsondat^2);
+  chi2sim = sum(pearsonsim^2);
+  pvalue = chi2dat>chi2sim;
+}
+",file="RegressionLognormalMatrix.stan")
+
+# Not standardized
+Mlognormal<-stan(file="RegressionLognormalMatrix.stan",
+  data=Mlist,refresh=0)
+print(Mlognormal,pars=c("sigma","b","pvalue"))
+
+#standardized
+MlognormalStandardized<-stan(file="RegressionLognormalMatrix.stan",
+  data=MlistStandarized)
+print(MlognormalStandardized,pars=c("sigma","b","pvalue"))
+
+#Jags version
+write("model{
+for(i in 1:Ncoef){
+  b[i]~dnorm(0,1.0E-6)
+}  
+  sigma~dexp(1)
+  tau<-1/sigma^2
+for(i in 1:N) {  
+  ymean[i] <- inprod(xMatrix[i,],b)
+  Y[i]~dlnorm(ymean[i],tau)
+  resid[i] <- log(Y[i])-ymean[i]
+  ypred[i] ~ dlnorm(ymean[i], tau) 
+  pearsondat[i] <- (log(Y[i])-ymean[i])/sigma
+  pearsonsim[i] <- (log(ypred[i])-ymean[i])/sigma
+  loglik[i] <- -0.5*log(2*3.14159)+0.5*log(tau)-0.5*tau*(log(Y[i])-ymean[i])^2-log(Y[i])
+}
+  dev <- -2 * sum(loglik[])
+  chi2dat <- sum(pearsondat^2)
+  chi2sim <- sum(pearsonsim^2)
+  pvalue <- chi2dat>chi2sim
+}
+",file="RegressionLognormalMatrix.jags")
+
+
+#Standardized in jags
+MlognormalStandardizedJags<-jags(MlistStandarized,
+  model.file="RegressionLognormalMatrix.jags",
+  parameters.to.save=c("b","loglik","sigma","chi2dat","chi2sim","pvalue","dev"),
+  n.iter = 100000, n.thin=4,n.burnin = 10000)
+round(MlognormalStandardizedJags$BUGSoutput$summary[c("sigma","b[1]","b[2]","b[3]","b[4]","b[5]","pvalue","dev","deviance"),],2)
+
+```
+## c. Residuals
+
+```{r}
+mortality$NormalPred<-summary(MnormalStandardized,par="ymean")$summary[,"mean"]
+mortality$NormalResid<-summary(MnormalStandardized,par="resid")$summary[,"mean"]
+mortality$LognormalPred<-summary(MlognormalStandardized,par="logymean")$summary[,"mean"]
+mortality$LognormalResid<-summary(MlognormalStandardized,par="resid")$summary[,"mean"]
+g1<-ggplot(mortality,aes(x=NormalPred,y=NormalResid))+
+  geom_point()+geom_abline(intercept=0,slope=0)
+g2<-ggplot(mortality,aes(sample=NormalResid))+geom_qq()+geom_qq_line()
+g3<-ggplot(mortality,aes(x=LognormalPred,y=LognormalResid))+
+  geom_point()+geom_abline(intercept=0,slope=0)
+g4<-ggplot(mortality,aes(sample=LognormalResid))+geom_qq()+geom_qq_line()
+grid.arrange(g1,g2,g3,g4)
+
+```
+
+Residuals look better for the lognormal.
+
+## d. WAIC for normal vs. lognormal
+
+```{r}
+LLa<- extract_log_lik(MnormalStandardized,par="loglik")
+LLajags <- MnormalStandardizedJags$BUGSoutput$sims.matrix[,paste0("loglik[",1:147,"]")]
+LLb<- extract_log_lik(MlognormalStandardized,par="loglik")
+LLbjags<- MlognormalStandardizedJags$BUGSoutput$sims.matrix[,paste0("loglik[",1:147,"]")]
+MnormalStandardizedJags$BUGSoutput$DIC
+
+waictab<-data.frame(software=c("Jags","Jags","Stan","Stan"),
+                    model=c("normal","lognormal","normal","lognormal"),
+                    waic=c(waic(LLajags)$estimate[3,1],waic(LLbjags)$estimate[3,1],
+                    waic(LLa)$estimate[3,1],waic(LLb)$estimate[3,1]),
+                    dic=c(MnormalStandardizedJags$BUGSoutput$DIC,
+                          MlognormalStandardizedJags$BUGSoutput$DIC,NA,NA)) %>%
+  mutate(deltaWAIC=c(waic[1:2]-min(waic[1:2]), waic[3:4]-min(waic[3:4])))
+
+waictab
+```
+
+WAIC also strongly prefers the lognormal. I have not yet figured out why the waic values are not identical for Jags vs. Stan. 
+
+## e Normal on log
+
+```{r}
+Mlist2<-list(Y=log(mortality$M),
+  xMatrix=MmatrixStandardized,
+  N=nrow(Mmatrix),
+  Ncoef=ncol(Mmatrix))
+Mlognormal2<-stan(file="RegressionMatrix.stan",
+  data=Mlist2,refresh=0)
+print(Mlognormal2,pars=c("sigma","b","pvalue"))
+
+LLe<-extract_log_lik(Mlognormal2,par="loglik")
+waic(LLe)
+```
+The parameters are the same for the lognormal model using the lognormal likelihood or the lognormal fit using a normal model on the log transformed y data.  However, the WAIC is not the same because the deviance is different. Thus, this model cannot b compared to the other models using information criteria. It is, however, a valid way to fit a lognormal model. 
+
+

@@ -1,0 +1,14 @@
+model
+{
+  for (i in 1:10)					
+  {
+    lambda[i] ~ dlnorm(m, tau) 
+    y[i] ~ dpois(lambda[i])  	
+  }
+
+  m ~ dnorm(0, 1.0E-6)  			
+  sd ~ dunif(0, 10)  				
+  tau <- 1 / (sd*sd)  				
+					
+}
+

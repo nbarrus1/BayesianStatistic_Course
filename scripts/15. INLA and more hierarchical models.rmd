@@ -1,0 +1,515 @@
+---
+title: "15. Inla and time series"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+#devtools::install_github('timcdlucas/INLAutils')
+library(INLAutils)
+library(INLA)
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(rstan)
+library(loo)
+library(lme4)
+library(gridExtra)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+Look at and change priors for fixed effect coefficients
+
+```{r}
+sleepInla0<-inla(Reaction~Days, 
+  data=sleepstudy)
+#sleep0$all.hyper to look at the priors
+
+#Change precision of fixed effect priors with control.fixed
+sleep0.1<-inla(Reaction~Days, 
+      control.fixed=list(mean=0,prec=1E-6,mean.intercept=0,
+      prec.intercept=1E-6),
+  data=sleepstudy)
+#sleep0.1$all.hyper
+summary(sleep0.1)
+```
+
+Check the prior for the variance (which is considered a hyperparameter)
+To change prior for variance, must define it in control.family
+
+```{r}
+inla.models()$latent$iid$hyper$theta
+names(inla.models()$latent$iid$hyper)
+sleep0.2<-inla(Reaction~Days,
+  control.family=list(hyper=list(prec=list(prior="loggamma",
+     param=c(.001,.001)))),
+     control.fixed=list(mean=0,prec=1E-6,mean.intercept=0,prec.intercept=1E-6),
+      data=sleepstudy)
+#sleep0.2$all.hyper                
+summary(sleep0.2)
+sleep0.2$summary.hyperpar
+
+```
+
+
+## More diagnostics on sleepstudy
+
+```{r}
+sleepstudy$Subject2<-sleepstudy$Subject
+
+sleepInla0<-inla(Reaction~Days, 
+  data=sleepstudy,
+  control.predictor = list(compute = TRUE),
+  control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+sleepInla1<-inla(Reaction~Days+f(Subject,model="iid"), 
+  data=sleepstudy,
+  control.predictor = list(compute = TRUE),
+  control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+sleepInla2<-inla(Reaction ~ Days + f(Subject,model="iid")+
+    f(Subject2, Days, model = "iid"),
+  data = sleepstudy, 
+  control.predictor = list(compute = TRUE),
+  control.compute=list(dic=TRUE,waic=TRUE,cpo=TRUE))
+#check adequacy
+summary(sleepInla0$cpo$failure)
+summary(sleepInla1$cpo$failure)
+summary(sleepInla2$cpo$failure)
+
+#Make table
+icInla<-data.frame(random.effect=0:2,
+  waic=c(sleepInla0$waic$waic,
+  sleepInla1$waic$waic,
+  sleepInla2$waic$waic),
+  dic=c(sleepInla0$dic$dic,
+  sleepInla1$dic$dic,
+  sleepInla2$dic$dic),
+  looic=-2*c(sum(log(sleepInla0$cpo$cpo)),
+  sum(log(sleepInla1$cpo$cpo)),
+  sum(log(sleepInla2$cpo$cpo))))%>%
+  mutate(deltawaic=waic-min(waic),
+    deltadic=dic-min(dic),
+    deltalooic=looic-min(looic))
+round(icInla,2)
+
+#Make dataframe for plots
+sleep0.fit<-sleepstudy %>%
+  mutate(fit=sleepInla0$summary.fitted$mean,
+    cpo=sleepInla0$cpo$cpo,
+    pit=sleepInla0$cpo$pit)
+sleep2.fit<-sleepstudy %>%
+  mutate(fit=sleepInla2$summary.fitted$mean,
+    cpo=sleepInla2$cpo$cpo,
+    pit=sleepInla2$cpo$pit)
+#CPO
+g1<-ggplot(sleep0.fit,aes(x=fit,y=cpo))+
+  geom_point()+ggtitle("Simple regression")
+g2<-ggplot(sleep2.fit,aes(x=fit,y=cpo))+
+  geom_point()+ggtitle("Random intercept and slope")
+grid.arrange(g1,g2,ncol=2)
+#PIT
+g1<-ggplot(sleep0.fit,aes(x=fit,y=pit))+
+  geom_point()+
+  ggtitle("Simple regression")+
+  geom_abline(intercept=0.5,slope=0)
+g2<-ggplot(sleep2.fit,aes(x=fit,y=pit))+
+  ggtitle("Random intercept and slope")+
+  geom_point()+
+  geom_abline(intercept=0.5,slope=0)
+grid.arrange(g1,g2,ncol=2)
+```
+
+
+## model with logistic regression
+
+```{r}
+lr<-read.csv(here("data", "lr.csv"))%>% mutate(across(numrock:nearsouth,~(.x-mean(.x))/sd(.x)))
+
+#INLA version, with default priors for simplicity,adding cpo and pit
+lr.inla<-inla(lr~numrock+volcanic+rockcell+nearslope+I(nearslope^2)+nearsouth,
+              family="binomial",
+              data=lr,
+              control.compute=list(cpo=TRUE),
+              control.predictor = list(compute=TRUE))
+summary(lr.inla)
+```
+
+## Put cpo and pit in a dataframe and plot
+
+
+```{r}
+lr.cpo<-cbind(lr,data.frame(lr.inla$cpo))
+lr.cpo$Prediction<-lr.inla$summary.fitted.values$mode
+g1<-ggplot(lr.cpo,aes(x=Prediction,y=cpo,color=factor(lr)))+geom_point()+
+  ggtitle("CPO against Prediction")   
+g2<-ggplot(lr.cpo,aes(x=Prediction,y=Prediction-lr,color=factor(lr)))+
+  geom_point()+
+  ggtitle("Residuals against Prediction")+geom_abline(intercept = 0,slope=0)
+grid.arrange(g1,g2)
+g1<-ggplot(lr.cpo,aes(x=Prediction,y=pit))+
+  geom_point(aes(color=factor(lr)))+
+  ggtitle("PIT against prediction") +
+  geom_abline(intercept=0.5,slope=0)
+g2<-ggplot(lr.cpo,aes(sample=pit))+
+  ggtitle("PIT QQ uniform plot") +
+  geom_qq(distribution = stats::qunif)+
+  geom_qq_line(distribution = stats::qunif)
+grid.arrange(g1,g2)
+```
+
+## Hierarchical models
+
+## Poisson and Poisson with extra variance
+
+From box 3.4 and 3.5 in McCarthy. First in JAGS
+
+```{r}
+write("model
+{
+  for (i in 1:10)					
+  {
+    y[i] ~ dpois(lambda)
+  }
+  lambda ~ dlnorm(0, 1.0E-6)  			
+}
+",file=here("JAGS_mods", "poisson1.txt"))
+
+data3.4<-data.frame(y=c(6,0,1,2,1,7,1,5,2,0))
+
+poisson1jags<-jags(data=data3.4,
+  model.file=here("JAGS_mods", "poisson1.txt"),
+  parameters.to.save="lambda")
+print(poisson1jags)
+
+write("model
+{
+  for (i in 1:10)					
+  {
+    lambda[i] ~ dlnorm(m, tau) 
+    y[i] ~ dpois(lambda[i])  	
+  }
+
+  m ~ dnorm(0, 1.0E-6)  			
+  sd ~ dunif(0, 10)  				
+  tau <- 1 / (sd*sd)  				
+					
+}
+",file=here("JAGS_mods", "poisson2.txt"))
+
+poisson2jags<-jags(data=data3.4,
+  model.file=here("JAGS_mods", "poisson2.txt"),
+  parameters.to.save=c("lambda","m","sd"),
+  n.iter=10000)
+print(poisson2jags)
+
+```
+
+Now INLA
+
+```{r}
+#inla.doc("poisson")
+poisson3.4<-inla(formula=y~1,family="poisson",data=data3.4)
+round(poisson3.4$summary.fixed,3)
+plot(poisson3.4)
+
+#Note that this is on the log scale because of the log link, to transform
+poisson3.4$marginals.fixed[[1]]
+meanval<-inla.tmarginal(exp,poisson3.4$marginals.fixed[[1]])
+plot(meanval)
+inla.zmarginal(meanval)
+```
+
+## Add quadrat number to the dataframe, for random effect
+
+```{r}
+data3.4$quadrat<-1:10
+data3.4
+poisson3.5<-inla(formula=y~f(quadrat,model="iid"),family="poisson",data=data3.4)
+summary(poisson3.5)
+plot(poisson3.5)
+```
+
+Try again with a more restrictive prior to get more similar to JAGS
+
+```{r}
+poisson3.5<-inla(formula=y~f(quadrat,model="iid",
+   hyper=list(prec=list(prior="loggamma",param=c(0.01,0.01)
+    ,initial=1))),family="poisson",data=data3.4)
+
+round(poisson3.5$summary.fixed,3)
+summary(poisson3.5)
+plot(poisson3.5)
+```
+
+Get quadrat predictions
+
+```{r}
+poisson3.5<-inla(formula=y~f(quadrat,model="iid",
+   hyper=list(prec=list(prior="loggamma",param=c(0.1,0.1)
+    ,initial=1))),family="poisson",data=data3.4,
+  control.predictor = list(compute=TRUE))
+poisson3.5pred<-data.frame(poisson3.5$summary.fitted.values)
+round(poisson3.5pred,2)
+```
+
+## Epil example OpenBUGS
+
+Here is the inla version https://sites.google.com/a/r-inla.org/www/examples/volume-1/code-for-epil-example
+
+the Epil dataset loads with the INLA library. 
+
+```{r}
+data(Epil)
+head(Epil)
+summary(Epil)
+ggplot(Epil,aes(x=Base,y=y,pch=factor(V4),color=Age))+geom_point()+
+  facet_wrap(factor(Trt)~.,ncol=2)
+```
+
+Set up in JAGS
+
+```{r}
+write("model 
+	{
+		for(j in 1 : N) {
+			for(k in 1 : T) {
+				log(mu[j, k]) <- a0 + alpha.Base * (log.Base4[j] - log.Base4.bar)   
+	                  + alpha.Trt * (Trt[j] - Trt.bar)  
+	                  + alpha.BT  * (BT[j] - BT.bar)  
+	                  + alpha.Age * (log.Age[j] - log.Age.bar)  
+	                  + alpha.V4  * (V4[k] - V4.bar) 
+	                  + b1[j] + b[j, k]
+				y[j, k] ~ dpois(mu[j, k])
+				b[j, k] ~ dnorm(0.0, tau.b);       # subject*visit random effects
+			}
+			b1[j]  ~ dnorm(0.0, tau.b1)        # subject random effects
+			BT[j] <- Trt[j] * log.Base4[j]    # interaction
+			log.Base4[j] <- log(Base[j] / 4) log.Age[j] <- log(Age[j])
+		}
+		
+	# covariate means:
+		log.Age.bar <- mean(log.Age[])                
+		Trt.bar  <- mean(Trt[])                   
+		BT.bar <- mean(BT[])                 
+		log.Base4.bar <- mean(log.Base4[])         
+		V4.bar <- mean(V4[])                  
+	# priors:
+	
+		a0 ~ dnorm(0.0,1.0E-4) 		           
+		alpha.Base ~ dnorm(0.0,1.0E-4)            
+		alpha.Trt  ~ dnorm(0.0,1.0E-4);           
+		alpha.BT   ~ dnorm(0.0,1.0E-4)            
+		alpha.Age  ~ dnorm(0.0,1.0E-4)            
+		alpha.V4   ~ dnorm(0.0,1.0E-4)
+		tau.b1     ~ dgamma(1.0E-3,1.0E-3); sigma.b1 <- 1.0 / sqrt(tau.b1)
+		tau.b      ~ dgamma(1.0E-3,1.0E-3); sigma.b  <- 1.0/  sqrt(tau.b)		     
+		        
+	# re-calculate intercept on original scale: 
+		alpha0 <- a0 - alpha.Base * log.Base4.bar - alpha.Trt * Trt.bar 
+		- alpha.BT * BT.bar - alpha.Age * log.Age.bar - alpha.V4 * V4.bar
+	}",here("JAGS_mods","epilJags.txt"))
+
+
+epilWide<-Epil %>% select(-rand,-V4) %>%
+  mutate(visit=rep(1:4,max(Ind))) %>% 
+  pivot_wider(names_from=visit,values_from=y)
+epilList<-list(Trt=epilWide$Trt,
+  Base=epilWide$Base,
+  Age=epilWide$Age,
+  y=epilWide[,5:8],
+  V4=c(0,0,0,1),
+  N=nrow(epilWide),
+  T=4)
+epilJags<-jags(data=epilList,
+  model.file=here("JAGS_mods","epilJags.txt"),
+  parameters.to.save=c("a0","alpha.Base","alpha.Trt","alpha.BT","alpha.Age","alpha.V4","tau.b1","tau.b"))
+print(epilJags)
+```
+
+
+Set up in INLA
+
+```{r}
+Epil<-Epil %>% mutate(
+  CTrt = Trt-mean(Trt),
+  ClBase4 = log(Base/4)-mean(log(Base/4)),
+  CV4 = V4-mean(V4),
+  ClAge = log(Age)-mean(log(Age)),
+  CBT = CTrt*ClBase4)
+  
+formula = y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +
+          f(Ind, model="iid") + f(rand,model="iid")
+
+epil.inla <- inla(formula,family="poisson", data = Epil)
+summary(epil.inla)
+autoplot(epil.inla)
+round(epil.inla$summary.fixed,3)
+round(epil.inla$summary.hyperpar,3)
+```
+
+Provide improved estimates for the hyperparameters
+
+```{r}
+?inla.hyperpar
+epil.hyper <- inla.hyperpar(epil.inla)
+summary(epil.hyper)
+```
+
+Make predictions
+
+```{r}
+epil.inla2<-inla(formula,family="poisson", data = Epil, 
+                 control.predictor = list(compute=TRUE),
+                 control.compute=list(cpo=TRUE,waic=TRUE,dic=TRUE))
+pred.epil<-epil.inla2$summary.fitted.values
+pred.epil<-bind_cols(pred.epil,Epil)
+```
+
+
+Plot residuals 
+
+```{r}
+pred.epil$resid<-pred.epil$y-pred.epil$mode
+g1<-ggplot(pred.epil,aes(x=mode,y=resid))+geom_point()+geom_abline(intercept=0,slope=0)
+g2<-ggplot(pred.epil,aes(sample=resid))+geom_qq()+geom_qq_line()
+grid.arrange(g1,g2,ncol=2)
+```
+
+
+Plot CPO and PIT
+
+```{r}
+pred.epil<-bind_cols(pred.epil,data.frame(epil.inla2$cpo))
+g1<-ggplot(pred.epil,aes(x=mode,y=cpo))+
+  geom_point()+
+  ggtitle("CPO against  prediction")
+g2<-ggplot(pred.epil,aes(x=mode,y=resid))+
+  geom_point()+
+  ggtitle("Residuals against Prediction")+
+  geom_abline(intercept = 0,slope=0)
+g3<-ggplot(pred.epil,aes(x=mode,y=pit))+
+  geom_point()+
+  ggtitle("PIT against prediction") +
+  geom_abline(intercept=0.5,slope=0)
+g4<-ggplot(pred.epil,aes(sample=pit))+
+  ggtitle("PIT QQ uniform plot") +
+  geom_qq(distribution = stats::qunif)+
+  geom_qq_line(distribution = stats::qunif)
+grid.arrange(g1,g2,g3,g4)
+```
+
+## Try a negative binomial model on the same data, removing extra variance term (rand)
+
+```{r}
+formula2 <- y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +
+  f(Ind, model="iid") 
+
+#inla.list.models()
+#inla.doc("nbinomial")
+#inla.doc("nbinomial2")
+epil.nb1<-inla(formula2,family="nbinomial", data = Epil, 
+                           control.predictor =list(compute=TRUE),
+  control.compute=list(cpo=TRUE,waic=TRUE,dic=TRUE))
+summary(epil.nb1)
+autoplot(epil.nb1)
+round(epil.nb1$summary.fixed,2)
+round(epil.nb1$summary.hyper,2)
+pred.nb<-epil.nb1$summary.fitted.values
+pred.nb<-bind_cols(pred.nb,Epil)
+pred.nb$resid<-pred.nb$y-pred.nb$mode
+g1<-ggplot(pred.nb,aes(x=mean,y=resid))+
+  geom_point()+geom_abline(intercept=0,slope=0)
+g2<-ggplot(pred.nb,aes(sample=resid))+
+  geom_qq()+geom_qq_line()
+grid.arrange(g1,g2,ncol=2)
+
+#Plot CPO and PIT
+pred.epil.nb<-bind_rows(pred.nb,data.frame(epil.nb1$cpo))
+g1<-ggplot(pred.epil,aes(x=mode,y=cpo))+
+  geom_point()+
+  ggtitle("CPO against  prediction")
+g2<-ggplot(pred.epil,aes(x=log(mode),y=resid))+
+  geom_point()+
+  ggtitle("Residuals against Prediction")+
+  geom_abline(intercept = 0,slope=0) 
+g3<-ggplot(pred.epil,aes(x=log(mode),y=pit))+geom_point()+
+  ggtitle("PIT against prediction")+   
+  geom_abline(intercept=0.5,slope=0)
+g4<-ggplot(pred.epil,aes(sample=pit))+
+  ggtitle("PIT QQ uniform plot") +
+  geom_qq(distribution = stats::qunif)+
+  geom_qq_line(distribution = stats::qunif)
+grid.arrange(g1,g2,g3,g4)
+```
+
+## Negative binomial2
+
+```{r}
+epil.nb2<-inla(formula2,family="nbinomial2", data = Epil, 
+               control.predictor = list(compute=TRUE),
+               control.compute=list(waic=TRUE,dic=TRUE,cpo=TRUE))
+summary(epil.nb2)
+```
+
+# Compare fixed effect parameters
+
+```{r}
+x1<-epil.inla$summary.fixed %>%
+  rownames_to_column(var = "Coefficient")
+x2<-epil.nb1$summary.fixed %>%
+  rownames_to_column(var = "Coefficient")
+x3<-epil.nb2$summary.fixed %>%
+  rownames_to_column(var = "Coefficient")
+  
+fixedDF<-bind_rows(list(Poisson=x1, Negbin1=x2, Negbin2=x3),.id = "Model")
+ggplot(fixedDF,aes(x=Coefficient,y=mean,col=Model))+
+  geom_point(position=position_dodge(width=0.2))+
+  geom_errorbar(aes(ymin=`0.025quant`,ymax=`0.975quant`),
+    width=0.25,lwd=1,position=position_dodge(width=0.2))
+```
+
+#Information criteria
+
+```{r}
+modtab<-data.frame(Model=c("Poisson","Negbin1","Negbin2"),             
+  WAIC=c(epil.inla2$waic$waic,
+        epil.nb1$waic$waic,
+        epil.nb2$waic$waic),
+      DIC=c(epil.inla2$dic$dic,
+        epil.nb1$dic$dic,
+        epil.nb2$dic$dic))
+modtab$deltaDIC=modtab$DIC-min(modtab$DIC)
+modtab$deltaWAIC=modtab$WAIC-min(modtab$WAIC)
+
+modtab
+```
+
+## Zero inflated poisson
+
+```{r}
+epil.zip0<-inla(formula,family="zeroinflatedpoisson0", data = Epil, 
+               control.compute = list(dic = TRUE, waic = TRUE,cpo=TRUE))
+
+summary(epil.zip0)
+
+epil.zip1<-inla(formula,family="zeroinflatedpoisson1", data = Epil, 
+               control.compute = list(dic = TRUE, waic = TRUE,cpo=TRUE))
+summary(epil.zip1)
+autoplot(epil.zip1)
+```
+
+Model comparison
+
+```{r}
+modtab<-data.frame(Model=c("Poisson","ZIP0","ZIP1"),
+                   WAIC=c(epil.inla2$waic$waic,epil.zip0$waic$waic,
+                   epil.zip1$waic$waic),
+                   DIC=c(epil.inla2$dic$dic,epil.zip0$dic$dic,epil.zip1$dic$dic))
+modtab$deltaDIC=modtab$DIC-min(modtab$DIC)
+modtab$deltaWAIC=modtab$WAIC-min(modtab$WAIC)
+modtab
+
+```
+
