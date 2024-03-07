@@ -1,0 +1,183 @@
+---
+title: "HW4 Solution"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## JAGS and STAN convergence diagnostics
+
+```{r,message=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+# To keep a compiled version of the code so you don't have to recompile
+rstan_options(auto_write = TRUE)
+y<-c(11, 3, 7, 6, 2, 36, 14, 9, 2, 10, 2, 7, 3, 1, 0, 0, 0, 1, 5, 
+0, 2, 11, 5, 3, 0, 3, 3, 27, 0, 11)
+```
+
+# 1. JAGS Poisson
+
+```{r}
+write("model{
+lambda~dlnorm(0,0.0001)
+for(i in 1:N) {
+ y[i]~dpois(lambda)
+}
+}",file="poissonJags.txt")
+
+jagsPoisson<-jags(data=list(y=y,N=length(y)),
+  parameters.to.save="lambda",
+  n.chains=2,n.burnin=10000,n.thin=1,n.iter=100000,
+  model.file="poissonJags.txt")
+print(jagsPoisson)
+ggsP<-ggs(as.mcmc(jagsPoisson))
+ggs_traceplot(ggsP)
+ggs_density(ggsP)
+```
+
+Rhat is low and n.eff is high. The density is smooth and the traceplot shows both chains oscillating as expected. Everything looks converged. 
+
+## 2. STAN poisson
+
+The code is in the file called poisson.stan. I turned of "message" in this chunk to not see all the outputs
+
+```{r}
+write("data {
+  int<lower=0> N;
+  int<lower=0> y[N];
+}
+parameters {
+  real<lower=0> lambda;
+}
+model {
+  lambda~lognormal(0,1000);
+  y ~ poisson(lambda);
+}
+
+",file="poisson.stan")
+stanPoisson<-stan(data=list(y=y,N=length(y)),
+  file="poisson.stan",
+  refresh=0)  #Note refresh =0 takes out the iterations
+print(stanPoisson)
+ggsPstan<-ggs(stanPoisson)
+ggs_traceplot(ggsPstan)
+ggs_density(ggsPstan)
+```
+
+There were no divergences and this looks reasonably converged. The density plots could be a bit more smooth. 
+
+## 3. Negative binomial JAGS
+
+```{r}
+write("model{
+  for (i in 1:N)					{
+     y[i] ~ dnegbin(p,r)			
+  }
+  p~dunif(0,1)
+  r~dlnorm(0.0,0.001)
+  m<-r*(1-p)/p
+  v<-r*(1-p)/(p*p)
+}
+",file="NegBinJags.txt")
+jagsNB<-jags(data=list(y=y,N=length(y)),
+  parameters.to.save=c("p","r","m","v"),
+  n.chains=2,n.burnin=10000,n.thin=1,n.iter=100000,
+  model.file="NegBinJags.txt")
+print(jagsNB)
+ggsNBjags<-ggs(as.mcmc(jagsNB))
+ggs_traceplot(ggsNBjags)
+ggs_density(ggsNBjags)
+ggs_pairs(ggsNBjags)
+ggs_autocorrelation(ggsNBjags)
+```
+
+Convergence looks fine, although there is some correlation between the two parameters, and autocorrelation along the chains.
+
+## 4. Negative binomial STAN
+
+
+```{r}
+write("data {
+  int<lower=0> N;
+  int<lower=0> y[N];
+}
+parameters {
+  real<lower=0,upper=1> p;
+  real<lower=0> r;
+}
+transformed parameters {
+  real<lower=0> m;
+  m = r *(1-p)/p;
+}
+model{
+  p~uniform(0,1);
+  r~lognormal(0,10);
+  y ~ neg_binomial_2(m,r);			
+}
+generated quantities{
+  real v;
+  v=m+m*m/r;
+}
+
+",file="negbin2a.stan")
+stanNB4<-stan(file="negbin2a.stan",
+  data=list(y=y,N=length(y)),
+  refresh=0)
+ggsNB4stan<-ggs(stanNB4)
+print(stanNB4)
+ggs_traceplot(ggsNB4stan)
+ggs_density(ggsNB4stan)
+stan_diag(stanNB4)
+ggs_pairs(filter(ggsNB4stan,Parameter %in% c("p","r")))
+ggs_autocorrelation(filter(ggsNB4stan,Parameter %in% c("p","r")))
+
+```
+
+There are no divergences, and the convergence looks fine. 
+
+## 5. Negative binomial STAN improved parameterization
+
+```{r}
+write("data {
+  int<lower=0> N;
+  int<lower=0> y[N];
+}
+parameters {
+  real<lower=0,upper=100> r;
+  real<lower=0> m;
+}
+model{
+  r ~lognormal(0.0, 10);
+  m ~lognormal(0.0, 10);  
+  y ~ neg_binomial_2(m,r);			
+}
+generated quantities{
+  real p;
+  real v;
+  real dispersion;
+  real stepProb;
+  p=r/(r+m);
+  v=m+m*m/r;
+  dispersion=1/p;
+  stepProb=if_else(dispersion>1,1,0);
+}
+
+",file="negbin2.stan")
+stanNB5<-stan(file="negbin2.stan",
+  data=list(y=y,N=length(y)),
+  refresh=0)
+print(stanNB5)
+ggsNB5stan<-ggs(stanNB5)
+ggs_traceplot(ggsNB5stan)
+ggs_density(ggsNB5stan)
+stan_diag(stanNB5)
+ggs_pairs(filter(ggsNB5stan,Parameter %in% c("m","r")))
+ggs_autocorrelation(filter(ggsNB5stan,Parameter %in% c("m","r")))
+
+```
+
+Diagnostics look fine. All results are similar. 

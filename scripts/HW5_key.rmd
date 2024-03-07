@@ -1,0 +1,212 @@
+---
+title: "HW5"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# HW 5 Model selection and linear regression
+
+```{r,message=FALSE}
+library(tidyverse)
+library(ggmcmc)
+library(R2jags)
+library(rstan)
+library(kableExtra) #for making nicer looking tables
+library(loo)
+options(mc.cores = parallel::detectCores())
+# To keep a compiled version of the code so you don't have to recompile
+rstan_options(auto_write = TRUE)
+
+```
+
+# 1. Model selection
+
+## a. JAGS Poisson and negative binomial
+
+This uses the same data and code as homework 4
+
+```{r}
+y<-c(11, 3, 7, 6, 2, 36, 14, 9, 2, 10, 2, 7, 3, 1, 0, 0, 0, 1, 5, 
+0, 2, 11, 5, 3, 0, 3, 3, 27, 0, 11)
+
+jagsPoisson<-jags(data=list(y=y,N=length(y)),
+  parameters.to.save="lambda",
+  n.chains=2,n.burnin=10000,n.thin=1,n.iter=100000,
+  model.file="poissonJags.txt")
+
+jagsNB<-jags(data=list(y=y,N=length(y)),
+  parameters.to.save=c("p","r","m","v"),
+  n.chains=2,n.burnin=10000,n.thin=1,n.iter=100000,
+  model.file="NegBinJags.txt")
+
+dictab<-data.frame(Model=c("Poisson","Negative Binomial"),
+  DIC=c(jagsPoisson$BUGSoutput$DIC,jagsNB$BUGSoutput$DIC),
+  pD=c(jagsPoisson$BUGSoutput$DIC,jagsNB$BUGSoutput$DIC))%>%
+  mutate(deltaDIC=DIC-min(DIC),
+    Weight=exp(-0.5*deltaDIC)/sum(exp(-0.5*deltaDIC)))
+kbl(dictab)%>% kable_paper()
+```
+
+The negative binomial is strongly preferred
+
+## b. WAIC in STAN
+
+We added a line to calculate the log likelihood in the STAN code
+
+```{r}
+stanPoisson<-stan(data=list(y=y,N=length(y)),
+  file="poisson.stan",
+  refresh=0)  
+
+LLpoisson<-extract_log_lik(stanPoisson,parameter_name="LL")
+waicP<-waic(LLpoisson)$estimate
+
+stanNB<-stan(data=list(y=y,N=length(y)),
+  file="negbin2.stan",
+  refresh=0)  
+LLNB<-extract_log_lik(stanNB,parameter_name="LL")
+waicNB<-waic(LLNB)$estimate
+
+waictab<-data.frame(Model=c("Poisson","Negative Binomial"),
+  WAIC=c(waicP[3,1],waicNB[3,1]),
+  pWAIC=c(waicP[2,1],waicNB[2,1]))%>%
+  mutate(deltaWAIC=WAIC-min(WAIC),
+    Weight=exp(-0.5*deltaWAIC)/sum(exp(-0.5*deltaWAIC)))
+kbl(waictab)%>% kable_paper()
+
+```
+## c. LOO
+
+```{r}
+looP<-loo(LLpoisson)$estimate
+looNB<-loo(LLNB)$estimate
+lootab<-data.frame(Model=c("Poisson","Negative Binomial"),
+  loo=c(looP[3,1],looNB[3,1]),
+  ploo=c(looP[2,1],looNB[2,1]))%>%
+  mutate(deltaloo=loo-min(loo),
+    Weight=exp(-0.5*deltaloo)/sum(exp(-0.5*deltaloo)))
+kbl(lootab)%>% kable_paper()
+
+```
+
+## d. Comparison
+
+The three information criteria gave nearly identical results, which is reassuring. All strongly preferred the negative binomial model. We expected this because, when we compared the mean and variance in the negative binomial model, they were very different (variance>>mean). So, the Poisson model is not a good representation of this data. The information criteria correctly identify this mismatch and choose the negative binomial. 
+
+# 2. Regression
+
+All the necessary components are in "regression2.stan" so I only need to run the model once. 
+
+```{r}
+deet<-read.csv("deet.csv")
+summary(deet)
+```
+
+## a. 
+
+```{r}
+modeltext<-"data {
+  int N;
+  vector[N] y;
+  vector[N] x;
+  real newx;
+}
+parameters {
+  real a;
+  real b;
+  real<lower=0> sigma;
+}
+model {
+a ~ normal(0,100);
+b ~ normal(0,100);
+sigma ~ exponential(0.01);
+for(i in 1:N) {
+ y[i] ~ normal(a + b * x[i], sigma);
+}
+}
+generated quantities {
+  real chi2dat;
+  real chi2sim;
+  real pvalue;
+  real resid[N];
+  real ypred[N];
+  real pearson2dat[N];
+  real pearson2sim[N];
+  real loglik[N];
+  real ymean[N];
+  real probPos;
+  real predictedValue;
+  for (i in 1:N)  {
+    ymean[i] = a + b * x[i];
+    resid[i] = y[i]-(a + b * x[i]);
+    ypred[i] = normal_rng(a + b *x[i], sigma); 
+    pearson2dat[i] = (y[i]-(a + b * x[i]))/sigma;
+    pearson2sim[i] = (ypred[i]-(a + b * x[i]))/sigma;
+    loglik[i] = normal_lpdf(y[i]|(a + b * x[i]),sigma);
+  }
+  chi2dat = sum(pearson2dat^2);
+  chi2sim = sum(pearson2sim^2);
+  pvalue = chi2dat>chi2sim;
+  probPos = b > 0;
+  predictedValue = normal_rng(a+b*newx,sigma);
+}
+
+"
+regression1<-stan(model_code=modeltext,
+  data=list(y=deet$bites,x=(deet$dose-mean(deet$dose))/sd(deet$dose),
+    N=nrow(deet),newx=(2.8-mean(deet$dose))/sd(deet$dose)),
+  refresh=0)
+print(regression1,pars=c("a","b","sigma","probPos"))
+
+```
+
+The probability of a positive slope is 0, meaning all 40000 draws had a negative slope. 
+
+## b. Model fit
+
+```{r}
+deet$Predicted<-get_posterior_mean(regression1,par="ymean")[,"mean-all chains"]
+predvals<-summary(regression1,par="ymean")$summary
+deet$lci<-predvals[,"2.5%"]
+deet$uci<-predvals[,"97.5%"]
+ggplot(deet,aes(x=dose))+
+  geom_point(aes(y=bites))+
+  geom_line(aes(y=Predicted))+
+  geom_ribbon(aes(ymin=lci,ymax=uci),alpha=0.3)
+```
+
+## c. Residuals
+
+```{r}
+deet$Residual<-get_posterior_mean(regression1,par="resid")[,5]
+ggplot(deet,aes(x=Predicted,y=Residual))+
+  geom_point()+
+  geom_abline(intercept=0,slope=0)
+ggplot(deet,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()
+```
+
+The residuals look fine. They appear to be normally distruted with a constant variance. Note that you could plot either the mean or the median. 
+
+## d. Chi squared discrepancy
+
+```{r}
+chidf<-data.frame(extract(regression1,par=c("chi2dat","chi2sim")))
+ggplot(chidf,aes(x=chi2dat,y=chi2sim))+
+  geom_point()+
+  geom_abline(intercept=0,slope=1)
+print(regression1,pars="pvalue")
+```
+
+The line goes through the scatterplot and the P value is 0.5, so the model is correctly specified.
+
+
+## e. Prediction interval
+
+```{r}
+predval<-summary(regression1,pars="predictedValue")$summary
+round(predval,2)
+```
+
+The prediction interval, calculated from normal simulated data at the new data point, is `r round(predval[,"2.5%"],2)` to `r round(predval[,"97.5%"],2)`, in the square root transformed scale. In number of bites this is `r round(predval[,"2.5%"]^2,2)` to `r round(predval[,"97.5%"]^2,2)`. The prediction interval is what we would use to get a range of possible values for an actual individual data point, as opposed to the credible interval, which only shows the posterior variability in the estimate of the regression line. 

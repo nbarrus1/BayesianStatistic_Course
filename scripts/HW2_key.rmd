@@ -1,0 +1,200 @@
+---
+title: "HW2"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=FALSE}
+library(tidyverse)
+library(ggmcmc)
+library(R2jags)
+```
+
+
+# 1. Calculating means
+
+## a Frequentist mean and its standard deviation
+
+```{r}
+weightVals<-c(46, 51, 35, 46, 26, 37, 49, 48, 30, 46, 21, 26, 37, 36, 49, 42, 50, 33, 52, 37)
+summary(weightVals)
+meanval<-mean(weightVals)
+sdval<-sd(weightVals)
+seval<-sd(weightVals)/sqrt(length(weightVals))
+```
+
+The mean is `r round(meanval,2)` and its standard error is `r round(seval,2)`
+
+## b  Analytic credible interval 
+
+```{r}
+priormean<-35
+priorsd<-2
+posterior.mean<-(priormean/priorsd^2+meanval*20/sdval^2)/(1/priorsd^2+20/sdval^2)
+posterior.sd<-1/sqrt(20/sdval^2+1/priorsd^2)
+CI<-c(posterior.mean-1.96*posterior.sd,posterior.mean+1.96*posterior.sd)
+```
+
+Posterior mean = `r round(posterior.mean, 2)`
+
+Posterior sd = `r round(posterior.sd, 2)`
+
+Credible interval = `r round(CI[1],2)` to `r round(CI[2],2)`
+
+## c Grid search
+
+```{r}
+meanGrid<-data.frame(mean=seq(from=21,to=52,by=0.01))
+for(i in 1:nrow(meanGrid)) {
+  meanGrid$LL[i]<-sum(dnorm(weightVals,meanGrid$mean[i],sdval,log=TRUE))
+  meanGrid$logPrior[i]<-dnorm(meanGrid$m[i],priormean,priorsd,log=TRUE)
+  meanGrid$logPost[i]<-meanGrid$LL[i]+meanGrid$logPrior[i]
+}  
+meanGrid$mean[meanGrid$logPost==max(meanGrid$logPost)]
+```
+The maximum posterior probability estimate is `r round(meanGrid$mean[meanGrid$logPost==max(meanGrid$logPost)],1)`
+
+## d. JAGS MCMC
+
+```{r}
+write("model{
+  m ~ dnorm(35,0.25)	#  vague prior
+  prec <- 1 / ( stdev*stdev)	# precision of the data = 1/variance
+  for (i in 1:20)		# for each of the ten trees
+  {
+    Y[i] ~ dnorm(m, prec) # diameter drawn from normal (likelihood)
+  }
+}", file="HW1.1.1.txt")
+
+HW1.1.1<-jags(data=list(Y=weightVals,stdev=sd(weightVals)),
+  parameters.to.save = "m",
+  model.file = "HW1.1.1.txt",
+  n.iter=100000,
+  n.burnin=10000
+)
+round(HW1.1.1$BUGSoutput$summary,3)
+```
+
+MCMC solution is mean=`r round(HW1.1.1$BUGSoutput$summary["m","mean"],2)`,and sd of the mean =`r round(HW1.1.1$BUGSoutput$summary["m","sd"],2)`.
+
+## e. Compare methods
+
+The values are similar for the analytic, grid search and except for the uncertainty caused by MCMC sampling, as expected. 
+
+## f. With different prior
+
+```{r}
+write("model{
+  m ~ dnorm(35,1.0E-6)	#  vague prior
+  prec <- 1 / ( stdev*stdev)	# precision of the data = 1/variance
+  for (i in 1:20)		# for each of the ten trees
+  {
+    Y[i] ~ dnorm(m, prec) # diameter drawn from normal (likelihood)
+  }
+}", file="HW1.1.12.txt")
+
+HW1.1.12<-jags(data=list(Y=weightVals,stdev=sd(weightVals)),
+  parameters.to.save = "m",
+  model.file = "HW1.1.12.txt",
+  n.iter=00000,
+  n.burnin=10000
+)
+round(HW1.1.12$BUGSoutput$summary,3)
+```
+
+With the vague prior, the results are more similar to the frequentist sampling (mean=`r round(HW1.1.12$BUGSoutput$summary["m","mean"],2)`, sd=`r round(HW1.1.12$BUGSoutput$summary["m","sd"],2)`) distribution and further from the prior. 
+
+## g. Diagnostics
+
+```{r}
+gg.1<-ggs(as.mcmc(HW1.1.1))
+gg.1<-filter(gg.1,Parameter=="m")
+ggs_traceplot(gg.1) +ggtitle("With informative prior")
+ggs_density(gg.1)+ggtitle("With informative prior")
+```
+
+
+```{r}
+gg.2<-ggs(as.mcmc(HW1.1.12))
+gg.2<-filter(gg.2,Parameter=="m")
+ggs_traceplot(gg.2)+ggtitle("With vague prior")
+ggs_density(gg.2)+ggtitle("With vague prior")
+```
+
+Both look converged, based on the low values of Rhat (near 1), high values of n.eff (>3000), smooth density plot, and no pattern in the traceplot.  
+
+# 2. Binomial and negative binomial
+
+## a. Binomial model 
+
+- Data: x= 5 mortalities out of 17
+
+- Parameter: Mortality rate r
+
+- Likelihood:  x~binomial(r,17)
+
+- Prior:  r~uniform(0,1)
+
+## b. Jags MCMC fit
+
+```{r}
+write("model{
+  x~dbin(r,17)
+  r~dunif(0,1)
+}",
+  file="binom.txt")
+bin1<-jags(data=list(x=5),
+  parameters.to.save = c("r"),
+  model.file = "binom.txt",
+  n.iter=100000,
+  n.burnin=10000)
+print(bin1)
+ggb<-ggs(as.mcmc(bin1))
+ggb<-filter(ggb,Parameter=="r")
+ggs_traceplot(ggb)+ggtitle("Binomial")
+ggs_density(ggb)+ggtitle("Binoimal")
+```
+
+The mortality rate is `r round(bin1$BUGSoutput$summary["r","mean"],2)` with a credible interval of `r round(bin1$BUGSoutput$summary["r","2.5%"],2)` to `r round(bin1$BUGSoutput$summary["r","97.5%"],2)`. 
+
+
+## c. Negative binomial model 
+
+- Data: x= 12 survivors before 5 mortalities
+
+- Parameter: Mortality rate r
+
+- Likelihood:  x~NegativeBinomial(r,5)
+
+- Prior:  r~uniform(0,1)
+
+## b. Jags MCMC fit
+
+```{r}
+write("model{
+  x~dnegbin(r,5)
+  r~dunif(0,1)
+}",
+  file="negbinom.txt")
+negbin1<-jags(data=list(x=12),
+  parameters.to.save = c("r"),
+  model.file = "negbinom.txt",
+  n.iter=200000,
+  n.burnin=10000)
+print(negbin1)
+ggnb<-ggs(as.mcmc(negbin1))
+ggnb<-filter(ggnb,Parameter=="r")
+ggs_traceplot(ggnb)+ggtitle("Negative binomial")
+ggs_density(ggnb)+ggtitle("Negative binomial")
+```
+
+The mortality rate is `r round(negbin1$BUGSoutput$summary["r","mean"],2)` with a credible interval of `r round(negbin1$BUGSoutput$summary["r","2.5%"],2)` to `r round(negbin1$BUGSoutput$summary["r","97.5%"],2)`. 
+
+## e. Comparison
+
+The negative binomial and binomial estimates are the same except for MCMC sampling error, as expected under the likelihood principal. 

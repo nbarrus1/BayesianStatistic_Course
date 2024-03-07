@@ -1,0 +1,143 @@
+---
+title: "Homework 1"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+```
+
+
+## 1. DeGeorge Syndrome
+
+```{r}
+DeGeorge<-data.frame(Disease=c("yes","no"), Prob.disease=c(1/4000,3999/4000),
+  Conditional.prob=c(0.99,0.0011))
+DeGeorge$Prob.pos.and.disease=DeGeorge$Prob.disease*DeGeorge$Conditional.prob
+DeGeorge$Prob.disease.given.positive<-DeGeorge$Prob.pos.and.disease/sum(DeGeorge$Prob.pos.and.disease)
+DeGeorge
+```
+
+Prior P(disease)=0.00025
+
+P(positive result|disease)=0.99
+
+P(positive result|no disease)=0.0011
+
+By Bayes rule,the probability of having the disease given a positive result is the fraction of the positives that are true rather than false positives
+$$P(disease|positive) = \frac{P(positive|disease)P(disease)}{P(positive|disease)P(disease)+P(positive|no disease)P(no disease)}=$$
+$$P(disease|positive) = \frac{0.99*0.00025}{0.99*0.00025+0.0111*0.99975)}=$$ `r round(DeGeorge$Prob.disease.given.positive[1],3)`
+
+
+## 2. Binomial likelihood
+
+```{r}
+females<-c(8, 10, 8, 8, 7, 8, 9, 10, 6, 7, 7, 4, 8, 6, 8, 
+7, 8, 10, 6, 7)
+turtle<-data.frame(females=females,index=1:20)
+```
+
+## a. Find the MLE p with a grid search
+
+Since the sample size is 20, we need to loop over all the potential values of the proportion female and calculate the sum of the likelihood across the 20 samples. 
+
+```{r}
+sexRatio<-data.frame(p=seq(0.1,0.99,by=0.01))
+for(i in 1:nrow(sexRatio)) {
+ sexRatio$LL[i]<-sum(dbinom(females,10,sexRatio$p[i],log=TRUE))
+}
+sexRatio[sexRatio$LL==max(sexRatio$LL),]
+```
+The MLE of p is 0.76.
+
+## b  Plot the likelihood profile
+
+```{r}
+ggplot(sexRatio,aes(x=p,y=LL))+geom_line()+
+  ggtitle("Log likelihood")
+```
+## c. Minimize the negative log likelihood
+
+```{r}
+getNegLogLike<-function(p,data) {
+  x<-data$females
+  -sum(dbinom(x,10,p,log=TRUE))
+}
+
+sexRatioModel<-optim(par=0.5,
+                      fn=getNegLogLike,
+                     method="Brent",
+                     lower=0,
+                     upper=1,
+                     data=turtle
+                     )
+sexRatioModel$par
+
+```
+The MLE value is the same. 
+
+## 3. Normal likelihood
+
+```{r}
+lengthDat<-c(26.4, 16.1, 26.8, 26.5, 29, 22.4, 21.4, 25.2, 26.1, 16.3, 24.2, 
+20.9, 11.5, 22.2, 22.1, 19.1, 24.4, 24.1, 21.5, 20.2)
+data<-data.frame(length=lengthDat)
+```
+
+## a. Grid search
+
+```{r}
+meanSdVal<-expand.grid(mean=seq(1,30,length=100),sd=seq(0.1,10,length=100))
+for(i in 1:nrow(meanSdVal)) {
+  meanSdVal$LL[i]<-sum(dnorm(data$length,meanSdVal$mean[i],meanSdVal$sd[i],log=TRUE))
+}
+meanSdVal[meanSdVal$LL==max(meanSdVal$LL),]
+```
+The MLE of the mean is 22.4 and sd is 4.1
+
+## b Objective function
+```{r}
+getNegLogLikeNormal<-function(pars,data) {
+  x=data$length
+  mu=pars[1]
+  sd=pars[2]
+  LL<-dnorm(x,mu,sd,log=TRUE)
+  -sum(LL)
+}
+meanSdModel<-optim(par=c(20,2),
+                  fn=getNegLogLikeNormal,
+                  data=data)
+meanSdModel$par
+```
+The values are identical to what we got with the grid search. 
+
+## c. Hessian
+
+```{r}
+
+meanSdModel<-optim(par=c(20,2),
+                  fn=getNegLogLikeNormal,
+                  data=data,
+                  hessian=TRUE)
+solve(meanSdModel$hessian)
+
+```
+The inverse of the hessian is the variance covariance function. It shows a very low correlation (0.0013) between the mean and the sd, which is expected.
+
+## d Pointwise plot
+
+```{r}
+data$LL<-dnorm(data$length,meanSdModel$par[1],meanSdModel$par[2],log=TRUE)
+ggplot(data,aes(x=length,y=LL))+geom_point()
+```
+
+Data points that are closer to the mean have higher pointwise likelihood, as
+we expect. 

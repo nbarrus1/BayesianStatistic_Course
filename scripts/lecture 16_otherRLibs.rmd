@@ -1,0 +1,226 @@
+---
+title: "lecture 16_other R libraries"
+author: "Beth Babcock"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,message=FALSE}
+library(tidyverse)
+library(ggmcmc)
+library(BayesFactor)
+library(rstan)
+library(rstanarm)
+library(shinystan)
+library(lme4)
+library(loo)
+library(brms)
+library(here)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+
+## rstanarm
+
+```{r}
+sleepstudy$Reaction<-sleepstudy$Reaction/100
+rstanSleep<-stan_glm(Reaction~Days,data=sleepstudy)
+summary(rstanSleep)
+
+#Getting the generated rstan code is less useful than it sounds.
+#get_stanmodel(rstanSleep$stanfit)
+#To see priors
+prior_summary(rstanSleep)
+#?prior_summary
+#?stan_glm
+
+#to specify priors, both of these are the same as the default
+rstanSleep2<-stan_glm(Reaction~Days,data=sleepstudy,
+  prior_aux=rstanarm::exponential(1,autoscale=TRUE))
+rstanSleep3<-stan_glm(Reaction~Days,data=sleepstudy,
+  prior_aux=rstanarm::exponential(1/sd(sleepstudy$Reaction), autoscale=FALSE))
+prior_summary(rstanSleep2)
+prior_summary(rstanSleep3)
+
+```
+You can see that the scaled exponential prior on the standard deviation has a mean equal to the sd of the Y data.  
+
+```{r}
+stan_trace(rstanSleep)
+waic(rstanSleep)
+```
+
+To run shinystan and look at all the diagnostics
+
+```{r}
+#launch_shinystan(rstanSleep)
+
+```
+
+To get the replicated Y data without having to add the calculation in the code. 
+
+```{r}
+y_rep <- posterior_predict(rstanSleep)
+dim(y_rep)
+
+```
+
+Can also make the same posterior predictive density plots with pp_check
+
+```{r}
+pp_check(rstanSleep)
+```
+
+
+## Mixed models 
+
+```{r}
+#?stan_glmer
+
+rstanSleep2<-stan_glmer(Reaction~Days+(Days|Subject),data=sleepstudy)
+#launch_shinystan(rstanSleep2)
+```
+
+Poisson regression example
+
+```{r}
+Epil<-INLA::Epil %>% mutate(
+  CTrt = Trt-mean(Trt),
+  ClBase4 = log(Base/4)-mean(log(Base/4)),
+  CV4 = V4-mean(V4),
+  ClAge = log(Age)-mean(log(Age)),
+  CBT = CTrt*ClBase4)
+summary(Epil)
+
+rsEpil<-stan_glmer(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) + (1|rand), 
+                   data=Epil,
+                   family="poisson")
+#launch_shinystan(rsEpil)
+prior_summary(rsEpil)
+
+```
+
+Logistic regression example
+
+```{r}
+lr<-read.csv(here("data", "lr.csv"))
+
+rslr<-stan_glm(lr~numrock+volcanic+rockcell+nearslope+nearslope^2,
+               data=lr,
+               family="binomial")
+#launch_shinystan(rslr)
+```
+
+Anova example
+
+```{r}
+starling<-read.csv(here("data", "starling.csv")) %>%
+  mutate(location=factor(location),
+         period=factor(period))
+rsStarling<-stan_glm(mass~period*location,
+                     data=starling)
+rsStarling2<-stan_glm(mass~period+location,
+                     data=starling)
+#launch_shinystan(rsStarling)
+```
+
+## brms
+
+https://paul-buerkner.github.io/brms/
+
+```{r}
+
+brmsEpil<-brm(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) + (1|rand), 
+                   data=Epil,
+                   family="poisson")
+
+brmsEpil1<-brm(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) , 
+                   data=Epil,
+                   family="poisson")
+                   
+#launch_shinystan(brmsEpil)
+
+waic(brmsEpil,brmsEpil1)
+loo(brmsEpil,brmsEpil1)
+```
+
+Useful brms functions
+
+```{r}
+make_stancode(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) , 
+                   data=Epil,
+                   family="poisson")
+get_prior(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) , 
+                   data=Epil,
+                   family="poisson")
+prior_summary(brmsEpil)
+
+brmsEpil2<-brm(y ~ ClBase4 + CTrt + CBT+ ClAge + CV4 +(1|Ind) , 
+                   data=Epil,
+                   family="poisson",
+                   prior = prior(exponential(1),class="sd"))
+prior_summary(brmsEpil2)
+```
+
+## Using BayesFactor for anova
+
+```{r}
+ggplot(starling,aes(x=location,y=mass,color=period))+stat_summary(size=1)
+
+#Compare Bayesian models with WAIC, 
+sumtab<-data.frame(Model=c("Full","No int"),
+  WAIC=c(waic(rsStarling)$waic,waic(rsStarling2)$waic) )  %>% 
+  mutate(DeltaWAIC=WAIC-min(WAIC),
+  WAIC.wt=exp(-DeltaWAIC/2)/sum(exp(-DeltaWAIC/2)))
+sumtab
+```
+
+## Compute BayesFactor
+
+```{r}
+?anovaBF
+bf1 <- anovaBF(mass~location*period,data=starling)
+bf1
+bf1[3]
+bf1[4]/bf1[3]  #compare full to main effect only
+bf1[3]/bf1[4]  #without interaction is 4 times better
+extractBF(bf1)$bf  #get the number
+plot(bf1)
+plot(bf1[2:4]/bf1[1])
+```
+
+Ratio is 4.4, so model odds are 3.8 times higher for the model without interactions
+BF >1 is better.
+
+Model weights/probabilities can be calculated, assuming equal prior probabilities,
+
+```{r}
+BFratio<-extractBF(bf1)$bf[3]/extractBF(bf1)$bf[4]
+BFratio
+sumtab$BFprob<-c(1/(BFratio+1),1/(1/BFratio+1))
+sumtab
+```
+Diagnostics
+
+```{r}
+bf1NoInt<-ggs(as.mcmc(posterior(bf1,iterations=5000, index=3)))
+bf1Full<-ggs(as.mcmc(posterior(bf1,iterations=5000, index=4)))
+ggs_caterpillar(bf1NoInt)
+ggs_caterpillar(bf1Full)
+```
+
+## Regression example with BayesFactor
+
+```{r}
+
+#?lmBF
+BFReaction<-lmBF(Reaction~Days,data=sleepstudy)
+BFReaction
+```

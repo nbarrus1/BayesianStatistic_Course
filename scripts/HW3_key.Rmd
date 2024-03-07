@@ -1,0 +1,258 @@
+---
+title: "HW 3"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE,error=FALSE}
+library(tidyverse)
+library(ggmcmc)
+library(R2jags)
+theme_set(theme_bw())
+```
+
+# 1 Normal lengths
+
+## a. Gamma prior on precision
+
+```{r}
+y<- c(793, 1105, 1268, 678, 1363, 981, 990, 879, 739, 876, 1393, 
+774, 1037, 1183, 1101, 744, 1407, 683, 999, 940, 1431, 1270, 
+969, 917, 1547, 1193, 965, 1068, 1042, 1085, 970, 776, 872, 1302, 
+625, 780, 1297, 894, 1273, 1140, 1349, 709, 657, 714, 780, 874, 
+885, 803, 838, 841)
+
+
+write("
+model
+{
+  mean ~ dnorm(0, 1.0E-6)  
+  prec ~ dgamma(0.01, 0.001)  
+  Var<-1/prec
+  sd<-sqrt(Var)
+  for (i in 1:50)  					
+  {
+    y[i] ~ dnorm(mean, prec)  
+  }
+  largesd<-step(sd-250)
+}
+","HW3.1.a.txt")
+
+HW3.1ares<-jags(data=list(y=y),
+  parameters.to.save=c("mean","Var","sd","prec","largesd"),
+  model.file="HW3.1.a.txt",
+  n.iter=110000,
+  n.burnin = 10000,
+  n.thin=1)
+round(HW3.1ares$BUGSoutput$summary,3)
+ggs1a<-ggs(as.mcmc(HW3.1ares))
+ggs_density(filter(ggs1a,Parameter %in% c("mean","Var","sd","prec")))
+```
+
+The values of Rhat are close to 1.0, and n.eff is greater than 100000 so the model has converged adequately.
+
+## b. posterior summaries
+
+posterior standard deviation of the mean =  `r round(HW3.1ares$BUGSoutput$summary["mean","sd"],2)`
+
+posterior mean of the standard deviation = `r round(HW3.1ares$BUGSoutput$summary["sd","mean"],2)`
+
+posterior standard deviation of the standard deviation =`r round(HW3.1ares$BUGSoutput$summary["sd","sd"],2)`
+
+The posterior standard deviation of the mean (`r round(HW3.1ares$BUGSoutput$summary["mean","sd"],2)`) is most analogous to the frequentist standard error of the mean. 
+
+## c. uniform prior on sd
+
+Make sure the upper bound is much larger than the largest possible value. A bound of at least 500 is needed to keep the prior from influencing the results. 
+
+```{r}
+write("
+model
+{
+  mean ~ dnorm(0, 1.0E-6)  
+  sd ~ dunif(0,5000)  #Note larger upper bound
+  Var<-sd^2
+  prec<-1/Var
+  largesd<-step(sd-250)
+  for (i in 1:50)  					
+  {
+    y[i] ~ dnorm(mean, prec)  
+  }
+}
+","HW3.1.c.txt")
+
+HW3.1cres<-jags(data=list(y=y),
+  parameters.to.save=c("mean","Var","sd","prec","largesd"),
+  model.file="HW3.1.b.txt",
+  n.iter=110000,
+  n.burnin = 10000,
+  n.thin=1)
+round(HW3.1cres$BUGSoutput$summary,3)
+ggs3.1c<-ggs(as.mcmc(HW3.1cres))
+ggs_density(filter(ggs3.1c,Parameter %in% c("sd","Var","prec")))
+
+```
+
+## d. Exponential prior on sd
+
+The parameter in the exponential prior is 1/mean of the distribution. Since sd is the same order of magnitude as the data, for data points on the order of thousands, we should use a prior mean around 1/1000 for the standard deviation.  A prior mean of 0.1 would force the sd to be closer to 1/0.1=10 which is very informative. 
+
+```{r}
+write("
+model
+{
+  mean ~ dnorm(0, 1.0E-6)  
+  sd ~ dexp(0.0001)  #Parameter should be small because mean is large
+  Var<-sd^2
+  prec<-1/Var
+  largesd<-step(sd-250)
+  for (i in 1:50)  					
+  {
+    y[i] ~ dnorm(mean, prec)  
+  }
+}
+","HW3.1.d.txt")
+
+HW3.1dres<-jags(data=list(y=y),
+  parameters.to.save=c("mean","Var","sd","prec","largesd"),
+  model.file="HW3.1.d.txt",
+  n.iter=110000,
+  n.burnin = 10000,
+  n.thin=1)
+round(HW3.1dres$BUGSoutput$summary,3)
+ggs3.1d<-ggs(as.mcmc(HW3.1dres))
+ggs_density(filter(ggs3.1d,Parameter %in% c("sd","Var","prec")))
+
+```
+
+## e. Comparison
+
+As long as you used an appropriately wide and flat prior in each section, the results should all be very similar. 
+
+## f. Using step
+
+I already included the step function in all the models above in a variable called largesd. The answers are
+
+with gamma on precision. P(sd>250)=`r round(HW3.1ares$BUGSoutput$summary["largesd","mean"],2)`
+with uniform on sd. P(sd>250)=`r round(HW3.1cres$BUGSoutput$summary["largesd","mean"],2)`
+with exponential on sd. P(sd>250)=`r round(HW3.1dres$BUGSoutput$summary["largesd","mean"],2)`
+
+# 2. Binomial kingfishers
+```{r}
+write("model {
+  fraction~dbeta(a,b)
+  Y~dbinom(fraction,N)
+}","Binomial.txt")
+
+kingfisher<-list(Y=6,N=19,a=1,b=1)
+
+inits<-list(list(fraction=0.5),list(fraction=0.3))
+
+res2a<-jags(data=kingfisher,inits=inits,parameters.to.save = c("fraction"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2)
+
+round(res2a$BUGSoutput$summary,3)
+gg2a<-ggs(as.mcmc(res2a))
+ggs_density(filter(gg2a,Parameter=="fraction"))
+```
+
+## b. informative beta prior
+```{r}
+afunc<-function(mu,sig) mu*(mu*(1-mu)/sig^2-1)
+bfunc<-function(mu,sig) (1-mu)*(mu*(1-mu)/sig^2-1)
+
+meanval<-0.25
+cvval<-0.2
+sdval<-cvval*meanval;sdval
+
+a<-afunc(meanval,sdval)
+b<-bfunc(meanval,sdval)
+a;b
+
+kingfishInfo<-list(Y=6,N=19,a=a,b=b)
+
+res2b<-jags(data=kingfishInfo,inits=inits,parameters.to.save = c("fraction","fraction.prior"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2)
+
+round(res2b$BUGSoutput$summary,3)
+
+gg3b<-ggs(as.mcmc(res2b))
+ggs_density(gg3b)+theme_bw()
+```
+
+The beta parameters are a=`r a` and b=`r b`.  
+
+## c. 
+
+The informative prior reduced the mean value of the fraction of sites where kingfishers are present, and also increased the precision. This makes sense because the prior supported lower values of the fraction.  
+
+# 3. Model checks
+
+## a Priors
+```{r}
+write("model {
+  fraction~dbeta(a,b)
+  fraction.prior~dbeta(a,b)
+  Y~dbinom(fraction,N)
+  Ysim~dbinom(fraction,N)
+  Ysim.prior~dbinom(fraction.prior,N)
+}","Binomial.txt")
+
+res3aUniform<-jags(data=kingfisher,inits=inits,parameters.to.save = c("fraction","fraction.prior","Ysim","Ysim.prior"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2)
+res3aInformative<-jags(data=kingfishInfo,inits=inits,parameters.to.save = c("fraction","fraction.prior","Ysim","Ysim.prior"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2)
+
+round(res3aUniform$BUGSoutput$summary,3)
+gg3aU<-ggs(as.mcmc(res3aUniform))
+ggs_density(filter(gg3aU,Parameter %in% c("fraction","fraction.prior")))+
+  ggtitle("With uniform prior")
+
+round(res3aInformative$BUGSoutput$summary,3)
+gg3aI<-ggs(as.mcmc(res3aInformative))
+ggs_density(filter(gg3aI,Parameter %in% c("fraction","fraction.prior")))+
+  ggtitle("With informative prior")
+
+```
+
+## b. With no data
+
+```{r}
+kingfisherpmdp<-kingfisher
+kingfisherpmdp$Y<-NA
+res3aUniformPmpd<-jags(data=kingfisherpmdp,inits=inits,
+  parameters.to.save = c("fraction","fraction.prior","Ysim","Ysim.prior"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2,
+  DIC=FALSE)
+kingfisherInfopmdp<-kingfishInfo
+kingfisherInfopmdp$Y<-NA
+res3aInformativepmpd<-jags(data=kingfisherInfopmdp,inits=inits,
+  parameters.to.save = c("fraction","fraction.prior","Ysim","Ysim.prior"),
+  model.file="Binomial.txt",n.iter=41000,n.burnin=1000,n.thin=1,
+  n.chains=2,
+  DIC=FALSE)
+
+round(res3aUniformPmpd$BUGSoutput$summary,3)
+round(res3aInformativepmpd$BUGSoutput$summary,3)
+```
+
+Without data, the priors and posteriors are identical, as expected.
+
+## c. Simulated data
+```{r}
+sim.df1<-bind_rows(list(`Uniform prior` =data.frame(res3aUniform$BUGSoutput$sims.matrix),
+  `Informative`=data.frame(res3aInformative$BUGSoutput$sims.matrix)),.id="Prior")
+ggplot(sim.df1) +
+  geom_bar(aes(x=Ysim.prior,fill="Prior"),alpha=0.5)+
+  geom_bar(aes(x=Ysim,fill="Posterior"),alpha=0.5)+
+  facet_wrap(Prior~.,ncol=1)+
+  geom_vline(xintercept=6,color="red")+
+  ggtitle("Prior and posterior predictive distributions")+
+  xlab("Fraction present")
+```
