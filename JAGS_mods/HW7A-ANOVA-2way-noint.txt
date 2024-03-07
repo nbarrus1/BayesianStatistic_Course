@@ -1,0 +1,23 @@
+model   
+{  # two-way ANOVA with interaction term, using reference classes
+
+  #set up contrast priors
+  
+  base ~ dnorm(0, 1.0E-6)
+  a[1] <- 0   #reference location
+  a[2] ~ dnorm(0.0, 1.0E-6)
+  a[3] ~ dnorm(0.0, 1.0E-6)
+  a[4] ~ dnorm(0.0, 1.0E-6) 
+  b[1] <- 0   #refernce bait
+  b[2] ~ dnorm(0.0, 1.0E-6)
+  b[3] ~ dnorm(0.0, 1.0E-6)
+
+  tau ~ dgamma(0.001, 0.001)  # uninformative precision
+
+  for (i in 1:N) # for each of the samples
+  {
+    mean[i] <- base + a[X1[i]] + b[X2[i]] 
+    Y[i] ~ dnorm(mean[i], tau)
+  }
+}
+
