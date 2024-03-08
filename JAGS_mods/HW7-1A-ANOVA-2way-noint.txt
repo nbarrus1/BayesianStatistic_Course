@@ -1,5 +1,5 @@
 model   
-{  # two-way ANOVA with interaction term, using reference classes
+{  # two-way ANOVA without interaction term, using reference classes
 
   #set up contrast priors
   

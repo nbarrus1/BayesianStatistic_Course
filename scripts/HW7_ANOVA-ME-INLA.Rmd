@@ -101,7 +101,7 @@ Location 4 --ref+loc[4]-----ref+loc[4]+Bait[2]----ref+Loc[4]+Bait[3]-
 
 *set up and run JAGS model*  
 
-```{r}
+```{r, results='hide'}
 
 write("model   
 {  # two-way ANOVA without interaction term, using reference classes
@@ -142,9 +142,18 @@ jags.anova.2way.noint <-jags(data = moth.list,
   *output summary*
   
 ```{r}
-round(jags.anova.2way.noint$BUGSoutput$summary,2)
-```
+LLs <- paste0("LL[",1:moth.list$N,"]")
 
+summary.table <- as.data.frame(round(jags.anova.2way.noint$BUGSoutput$summary,digits = 3)) |> 
+  rownames_to_column() |> 
+  as.tibble() |> 
+  filter(!(rowname %in% LLs))|> 
+  rename(parameter = rowname)
+
+summary.table|> knitr::kable(caption = "Summary Table")
+```
+  
+  The reference class (Ground, Chemical), the location Lower (i.e., a[2]), the location Middle (i.e., a[3]). 
 
 #### B) Now add the 2-way interaction between location and bait to your model. Give the summary statistics. Which coefficients appear to be different from zero based on their credible intervals?  
 
@@ -159,7 +168,7 @@ Location 4 --ref+loc[4]-----ref+loc[4]+Bait[2]+int[4,2]----ref+Loc[4]+Bait[3]+in
 
 *set up and run JAGS model*  
 
-```{r}
+```{r, results='hide'}
 
 write("model   
 { #two-way ANOVA with interaction term, using reference classes
@@ -216,9 +225,20 @@ jags.anova.2way.int <-jags(data = moth.list,
   *output summary*
   
 ```{r}
-round(jags.anova.2way.int$BUGSoutput$summary,2)
+
+LLs <- paste0("LL[",1:moth.list$N,"]")
+
+summary.table <- as.data.frame(round(jags.anova.2way.int$BUGSoutput$summary,digits = 3)) |> 
+  rownames_to_column() |> 
+  as.tibble() |> 
+  filter(!(rowname %in% LLs)) |> 
+  rename(parameter = rowname)
+
+summary.table|> knitr::kable(caption = "Summary Table")
 ```
-  
+    
+
+the reference class-Ground, Chemical(i.e, base), the location lower (i.e, a[2]), the location middle (i.e., a[3])
   
 #### C) Calculate the delta-WAIC. Which of these two models is best?  Is that consistent with what you would expect from looking at the credible intervals of the parameter estimates?   
 
@@ -238,7 +258,9 @@ WAIC.table <- tibble(model = c("2way-Anova-noint", "2way-Anova-int"),
 
 WAIC.table |> select(-model.ls,-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC Table")
 ```
-
+  
+    
+Yes this is consistent with what I would expect, because all of the interaction coefficients CIs included zero (i.e., non-significant).
 
 ## Problem 2: Mixed effects/ heirarchical models in JAGS or STAN
 
@@ -247,55 +269,334 @@ WAIC.table |> select(-model.ls,-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC 
 
 *write and run the model*
 
-```{r}
+```{r,results='hide'}
 
-write("model{
-    #set up random effects
-    a ~ dnorm(0, 1.0E-6)
-    
-    #deviations from 
-    for (i in 1:5) {
-    d[i] ~ dnorm(0, 1.0E-6)
-    }
-    
-    sd_among ~ dunif(0,100)
-    
-    tau_a <- 1/(sd_among*sd_among)
+write("model {
+      ##random effects for one-way ANOVA##
+      
+      #set up priors
+      a ~ dnorm(0,1.0E-6)
+      for(i in 1:n.team) {
+        d[i] ~ dnorm(0.0, tau_a)
+      }
+      sd_among ~ dunif(0,100)
+      sd_within ~ dunif(0,100)
+      
+      #convert sd to precision
+      tau_a <- 1/(sd_among*sd_among)
+      tau_w <- 1/(sd_within*sd_within)
+      
+      #model
+      for(i in 1:N){
+        ymean[i] <- a +d[team[i]]
+        Y[i] ~ dnorm(ymean[i], tau_w)
+        LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau_w)-0.5*tau_w*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+      }
+      }", file = here("JAGS_mods","JAGS_HW7-2A-ME.txt"))
 
-      }", file = here("JAGS_mods","jags_2a_me.txt"))
+football.list <- list(Y = football.data$Weight,
+                      team = football.data$Team,
+                      n.team = length(unique(football.data$Team)),
+                      N = length(football.data$Weight))
 
+JAGS.2A.1way.anova.me <- jags(data = football.list,model.file=here("JAGS_mods","JAGS_HW7-2A-ME.txt"),
+  parameters.to.save=c("a","d","sd_among","sd_within","LL"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
 
 ```
+  
+  *summary output*  
+  
+```{r}
+LLs <- paste0("LL[",1:football.list$N,"]")
 
+summary.table <- as.data.frame(round(JAGS.2A.1way.anova.me$BUGSoutput$summary,digits = 3)) |> 
+  rownames_to_column() |> 
+  as.tibble() |> 
+  filter(!(rowname %in% LLs ))|> 
+  rename(parameter = rowname)
+
+summary.table|> knitr::kable(caption = "Summary Table")
+```
+  
+  *caterpillar plot*  
+  
+```{r}
+
+ggs(as.mcmc(JAGS.2A.1way.anova.me)) |> 
+  filter(Parameter %in% paste0("d[",1:football.list$n.team,"]")) |> 
+  ggs_caterpillar()
+
+```
+  
+  
 
 #### B) Compare the CIs of the standard deviations within and between groups. Based on these results, do you think the location random effect is necessary in this model?  
 
+```{r}
 
+ggs(as.mcmc(JAGS.2A.1way.anova.me)) |> 
+  filter(Parameter %in% c("sd_within","sd_among")) |> 
+  ggs_caterpillar()
+
+```
+  
+Based on these results, the sd_within is greater than sd_among, thus I would say that random effects aren't necessary in the model.
 
 #### C) Now run the model without the location random effect, with only the grand mean (i.e a null model).  Show the WAIC values for the models in part a and part c.  Does the WAIC support including the random effect in the model?  
+  
+  *write and run the model*
+  
 
+```{r, results='hide'}
 
+write("model {
+      ##Null model ##
+      
+      #set up priors
+      a ~ dnorm(0,1.0E-6)
+      sd_within ~ dunif(0,100)
+      
+      #convert sd to precision
+      tau_w <- 1/(sd_within*sd_within)
+      
+      #model
+      for(i in 1:N){
+        ymean[i] <- a 
+        Y[i] ~ dnorm(ymean[i], tau_w)
+        LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau_w)-0.5*tau_w*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+      }
+      }", file = here("JAGS_mods","JAGS_HW7-2A-ME.txt"))
+
+football.list <- list(Y = football.data$Weight,
+                      team = football.data$Team,
+                      n.team = length(unique(football.data$Team)),
+                      N = length(football.data$Weight))
+
+JAGS.2C.1way.anova.null <- jags(data = football.list,model.file=here("JAGS_mods","JAGS_HW7-2A-ME.txt"),
+  parameters.to.save=c("a","sd_within","LL"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+
+```
+  
+   *summary output*  
+  
+```{r}
+LLs <- paste0("LL[",1:football.list$N,"]")
+
+summary.table <- as.data.frame(round(JAGS.2C.1way.anova.null$BUGSoutput$summary, digits = 3)) |> 
+  rownames_to_column() |> 
+  as.tibble() |> 
+  filter(!(rowname %in% LLs ))|> 
+  rename(parameter = rowname)
+
+summary.table|> knitr::kable(caption = "Summary Table")
+```
+
+  *WAIC table*  
+  
+```{r}
+LLs <- paste0("LL[",1:football.list$N,"]")
+
+WAIC.table <- tibble(model = c("team_random", "null"),
+                    model.ls = c(list(JAGS.2A.1way.anova.me), list(JAGS.2C.1way.anova.null)),
+                    LL.ls = c(list(JAGS.2A.1way.anova.me$BUGSoutput$sims.matrix[,LLs]),
+                            list(JAGS.2C.1way.anova.null$BUGSoutput$sims.matrix[,LLs]))) |> 
+  mutate(WAIC.ls = map(LL.ls, waic),
+         elpd_waic = map_dbl(WAIC.ls,c(1,1)),
+         p_waic = map_dbl(WAIC.ls,c(1,2)),
+         waic = map_dbl(WAIC.ls,c(1,3)),
+         deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+WAIC.table |> select(-model.ls,-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC Table")
+```
+  
+      
+The deltaWAIC of the random effect model was only 0.468 from the null model, suggesting that both models perform similarly. This also suggest that including the random effects doesn't add anything to the model, so i'd say it doesn't support using the random effect in the model.
 
 #### D) When, if ever, would it make sense to model team as a fixed effect rather than a random effect? Explain your reasoning.  
 
+  
+It would make sense to model the team as a fixed effect if the goal was to assess different weights between teams. For example, if the research question was: which team has the heaviest players? In this instance, the mean value for each team is of interest.  
 
 ## Problem 3: INLA   
 
 
 #### A) Repeat the moth models from part 1 in INLA along with a 3rd model with location only, using default priors, and print the results with summary and autoplot.  Do you get similar coefficients to part 1 for the same models?  
 
+  *models*
+
+```{r,results='hide'}
+#bait+location
+
+moth.noint.inla <- inla(Moths~Location+Bait, data = moth.data,
+                        control.compute = list(dic = TRUE,
+                                               waic = TRUE))
+
+#bait*location
+
+moth.int.inla <- inla(Moths~Location*Bait, data = moth.data,
+                        control.compute = list(dic = TRUE,
+                                               waic = TRUE))
+
+#location
+moth.loc.inla <- inla(Moths~Location, data = moth.data,
+                        control.compute = list(dic = TRUE,
+                                               waic = TRUE))
+
+```
+
+  
+  *model summaries*  
+  
+```{r}
+#bait+location
+
+summary(moth.noint.inla)
+
+#bait*location
+
+summary(moth.int.inla)
+
+#location
+
+summary(moth.loc.inla)
+
+```
+  
+  *auto plots*  
+  
+```{r}
+#bait+location
+
+autoplot(moth.noint.inla)
+
+#bait*location
+
+autoplot(moth.int.inla)
+
+#location
+
+autoplot(moth.loc.inla)
+
+```
+   
+The coefficients were similar in INLA as they were to the JAGS versions in problem 1.  
 
 #### B) Calculate DIC and WAIC for all 3 models. Which model is preferred?  
 
+```{r}
+
+###DIC
+DIC.table <- tibble(model = c("no_interaction", "interaction","location_only"),
+                    dic = c(moth.noint.inla$dic$dic,
+                             moth.int.inla$dic$dic,
+                             moth.loc.inla$dic$dic)) |> 
+  mutate(deltaDIC = dic - min(dic),
+         weight = round(exp(-2*deltaDIC)/sum(exp(-2*deltaDIC)),digits = 5))
+
+DIC.table  |> knitr::kable(caption = "DIC Table")
+
+###WAIC
+
+WAIC.table <- tibble(model = c("no_interaction", "interaction","location_only"),
+                    waic = c(moth.noint.inla$waic$waic,
+                             moth.int.inla$waic$waic,
+                             moth.loc.inla$waic$waic)) |> 
+  mutate(deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+WAIC.table  |> knitr::kable(caption = "WAIC Table")
+
+```
+
+  The model that only includes location is preferred.  
 
 #### C)	Plot the residuals vs. fitted values and qqnormal of the residuals from the WAIC best model for the moth data. Does the normal model seem to fit adequately?  
 
+```{r}
+
+moth.loc.df <- data.frame(moth.loc.inla$summary.fitted.values) |> 
+  bind_cols(moth.data) |> 
+  mutate(residual = Moths-mean)
+
+
+moth.loc.df |> 
+  ggplot(aes(x=mean,y=residual))+
+  geom_point()+
+  geom_abline(intercept=0,slope=0)
+
+moth.loc.df |> 
+  ggplot(aes(x=mean,y=Moths))+
+  geom_point()+
+  geom_abline(intercept=0,slope=1)
+
+```
+  
+  The model seems to fit adequately, the residuals seem to be well distributed around zero across the predicted values. And the qqplot appears adequate.  
 
 #### D) Repeat the football models from part 2a and c in INLA, using default priors, and print the results with summary and autoplot.  What did you get for the WAIC values and was the deltaWAIC result the same?   
 
+  *models*
+
+```{r}
+#random effect
+
+football.me.inla <- inla(Weight~1+f(Team,model = "iid"), data = football.data,
+                        control.compute = list(dic = TRUE,
+                                               waic = TRUE))
+
+#no random effect
+
+football.inla <- inla(Weight~1, data = football.data,
+                        control.compute = list(dic = TRUE,
+                                               waic = TRUE))
 
 
+```
+  
+  
+   *model summaries*  
+  
+```{r}
+#random effect
 
+summary(football.me.inla)
+
+#no random effect
+
+summary(football.inla)
+
+
+```
+     *autoplots*  
+  
+```{r}
+#random effect
+
+autoplot(football.me.inla)
+
+#no random effect
+
+autoplot(football.inla)
+
+```
+```{R} 
+    ###WAIC
+
+WAIC.table <- tibble(model = c("Random Effects", "No Random Effects"),
+                    waic = c(football.me.inla$waic$waic,
+                             football.inla$waic$waic)) |> 
+  mutate(deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+WAIC.table  |> knitr::kable(caption = "WAIC Table")
+
+```
+  
+  The results were similar in that the both models were within 1 WAIC unit from each other. However, the INLA model said that the random effect model had the Lowest WAIC.  Though this was only 0.230 WAIC units away from the model without random effects. 
+  
 ```{r, eval=FALSE, include=FALSE}
 rmarkdown::render(input = here("scripts","HW7_ANOVA-ME-INLA.Rmd"),
                   output_file = here("renders","HW7_ANOVA-ME-INLA.pdf"),

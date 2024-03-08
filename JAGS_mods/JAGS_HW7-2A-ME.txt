@@ -1,0 +1,17 @@
+model {
+      ##Null model ##
+      
+      #set up priors
+      a ~ dnorm(0,1.0E-6)
+      sd_within ~ dunif(0,100)
+      
+      #convert sd to precision
+      tau_w <- 1/(sd_within*sd_within)
+      
+      #model
+      for(i in 1:N){
+        ymean[i] <- a 
+        Y[i] ~ dnorm(ymean[i], tau_w)
+        LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau_w)-0.5*tau_w*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+      }
+      }
