@@ -1,0 +1,300 @@
+---
+title: "HW8_INLA&otherlibs"
+author: "Beth Babcock"
+date: "2024-03-18"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Purpose:
+
+The purpose of this markdown document is to work through Homework 8 in Dr. Babcock's Bayesian Statistics Course at the University of Miami. Homework 8 deals with INLA and other libraries in R. 
+
+## General Start to Code
+
+```{r}
+
+rm(list = ls())
+
+######github#####
+#note, only needed after 90 days from 1/16/2024
+
+#  usethis::create_github_token()  
+#  gitcreds::gitcreds_set()
+
+#####check for r updates#####
+#note, updateing may take some time so plan accordingly
+
+#require(installr)
+
+#check.for.updates.R()
+
+#updateR() #only if needed
+
+#######check for package updates#####
+#note, updateing may take some time so plan accordingly
+
+#old.packages()
+
+# update.packages() #make the decision to the update the packages
+
+```
+  
+## Load packages
+
+```{r, results='hide'}
+library(INLAutils)
+library(INLA)
+library(tidyverse)
+library(R2jags)
+library(rstan)
+library(ggmcmc)
+library(purrr)
+library(magrittr)
+library(here)
+library(loo)
+library(DHARMa)
+library(lme4)
+library(rstanarm)
+library(shinystan)
+
+theme_set(theme_bw(base_size=15))
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+
+## Data
+
+For this problem we will use the Arabidopsis dataset in the lme4 library. See the help file for the dataset in the lme4 library for an explanation of the variables. The response (y) variable is number of fruits produced (an integer), The fixed effects variables are the factors called nutrients (two different nutrient treatments) and amd (with or without simulated herbivory) and their interaction. Random effects are popu (population) and gen (genotype). Genotype is nested within population, and you can model it as +(1|popu)+(1|gen) in lme4 syntax, because both random effects have a mean of zero in the linear model. 
+
+```{r}
+
+#get the data from lme4
+
+arabidopsis.data <- Arabidopsis |> 
+  mutate(nutrient.factor = as.factor(nutrient),
+         amd.factor = as.factor(amd),
+         popu.factor = as.factor(popu),
+         gen.factor = as.factor(gen))
+
+
+head(arabidopsis.data)
+
+```
+
+## Problem 1) Poisson, negative binomial and random effects in INLA  
+
+#### A-1)	Plot a histogram of the total.fruits variable. Which likelihood would seem to be best for this model based on the data distribution?  
+
+```{r}
+
+arabidopsis.data |> 
+  ggplot(aes(x = total.fruits))+
+  geom_histogram()
+
+```
+
+  Based on the histogram I would say that a poisson model or negative binomial model would be best for this model. Poisson if the mean and the sd were equal and negative-binomial if the mean and sd are different.  
+
+#### A-2) Use the following code to plot the data. Do you think the random effects are needed and that the fixed effects are likely to be significant?  
+
+```{r}
+
+arabidopsis.data |> 
+  ggplot(aes(x = gen.factor, color = popu, y = total.fruits))+
+  facet_grid(nutrient.factor~amd.factor)+
+  stat_summary()
+
+```
+
+  I think the random effects are needed, and it appears that there is a difference between the nutrients abut it is harder to tell if the clipped vs unclipped will be different.  
+
+#### B) Use INLA to run four different likelihood models, each with the same model formula described above, and show the summary statistics. Note that you will change nothing expect the family to do this part. The likelihood models are: 1) Poisson, 2) Negative Binomial, 3) Zero inflated Poisson, and 4) Normal(gaussian).  
+
+```{r}
+
+#Poission
+
+fruit.poisson.inla <-inla(total.fruits~nutrient.factor +  
+                                       amd.factor + f(popu.factor,model = "iid") +
+                                       f(gen.factor,model = "iid"), 
+                          data = arabidopsis.data,
+                          family = "poisson",
+                          control.predictor = list(compute = TRUE),
+                          control.compute = list(dic = TRUE,
+                                                 waic = TRUE,
+                                                 cpo = TRUE))
+
+#Negative Binomial 
+
+fruit.negbinom.inla <-inla(total.fruits~nutrient.factor +  
+                                       amd.factor + f(popu.factor,model = "iid") +
+                                       f(gen.factor,model = "iid"), 
+                          data = arabidopsis.data,
+                          family = "nbinomial",
+                          control.predictor = list(compute = TRUE),
+                          control.compute = list(dic = TRUE,
+                                                 waic = TRUE,
+                                                 cpo = TRUE))
+
+
+#zero inflated poisson
+
+fruit.zerinflpo.inla <-inla(total.fruits~nutrient.factor +  
+                                       amd.factor + f(popu.factor,model = "iid") +
+                                       f(gen.factor,model = "iid"), 
+                          data = arabidopsis.data,
+                          family = "zeroinflatedpoisson1",
+                          control.predictor = list(compute = TRUE),
+                          control.compute = list(dic = TRUE,
+                                                 waic = TRUE,
+                                                 cpo = TRUE))  
+
+#gaussian
+
+fruit.gaussian.inla <-inla(total.fruits~nutrient.factor +  
+                                       amd.factor + f(popu.factor,model = "iid") +
+                                       f(gen.factor,model = "iid"), 
+                          data = arabidopsis.data,
+                          control.predictor = list(compute = TRUE),
+                          control.compute = list(dic = TRUE,
+                                                 waic = TRUE,
+                                                 cpo = TRUE))
+
+
+```
+
+
+#### C) Make a table showing the WAIC and DIC for the 4 likelihood models. Which model is best and is that consistent with the values of the extra hyperparameters for NB, ZIP and Normal models. In other words, is the mean different from the variance and are there extra zeroes?   
+
+*DIC*  
+
+```{r}
+
+WAIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
+                               "Zero Inflated Poisson", "Gaussian"),
+                    dic = c(fruit.poisson.inla$dic$dic,
+                             fruit.negbinom.inla$dic$dic,
+                             fruit.zerinflpo.inla$dic$dic,
+                             fruit.gaussian.inla$dic$dic)) |> 
+  mutate(deltaDIC = dic - min(dic),
+         weight = round(exp(-2*deltaDIC)/sum(exp(-2*deltaDIC)),digits = 5))
+
+WAIC.table  |> knitr::kable(caption = "DIC Table")
+
+```
+
+*waic*  
+
+```{r}
+
+WAIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
+                               "Zero Inflated Poisson", "Gaussian"),
+                    waic = c(fruit.poisson.inla$waic$waic,
+                             fruit.negbinom.inla$waic$waic,
+                             fruit.zerinflpo.inla$waic$waic,
+                             fruit.gaussian.inla$waic$waic)) |> 
+  mutate(deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+WAIC.table  |> knitr::kable(caption = "WAIC Table")
+
+```
+
+
+#### D) Plot the PIT and CPO residuals against the predicted values of the data points for the WAIC best model. Does the model seem to fit adequately according to the PIT?  
+
+*extract residuals*
+
+```{r}
+
+fruit.residuals <- arabidopsis.data |> 
+  mutate(fit = fruit.negbinom.inla$summary.fitted.values$mean,
+         cpo = fruit.negbinom.inla$cpo$cpo,
+         pit = fruit.negbinom.inla$cpo$pit)
+
+```
+   
+   *residual plots*  
+   
+```{r}
+
+fruit.residuals |> 
+  ggplot(aes(x = fit, y = cpo))+
+  geom_point()
+
+fruit.residuals |> 
+  ggplot(aes(x = fit, y = pit))+
+  geom_point()+ 
+  geom_hline(yintercept = 0.5)
+
+fruit.residuals |> 
+  ggplot(aes(sample = pit))+
+  geom_qq(distribution = stats::qunif)+
+  geom_qq_line(distribution = stats::qunif)
+
+
+```
+
+
+##Problem 2) Posterior predictive checks and rstanarm  
+
+#### A) Fit the same model from part 1 in rstanarm, using family neg_binomial_2.  Do you get similar values of the regression coefficients?  
+
+*fit and run the model*  
+
+```{r}
+
+fruit.negbinom.rstanarm <- stan_glmer(total.fruits ~ nutrient.factor + amd.factor + (1|popu.factor) +
+                                                  (1|gen.factor),
+                                      data = arabidopsis.data,
+                                      family = "neg_binomial_2")
+
+```
+  
+  *results*  
+  
+```{r}
+
+#inla results
+
+summary(fruit.negbinom.inla)
+
+#rstanarm results
+
+as_tibble(fruit.negbinom.rstanarm$stan_summary)
+
+```
+
+
+#### B) Make a plot of the INLA mean predicted value against the rstan arm mean predictions, being sure you have them both in the original (not log) scale.  
+
+
+#### C) Look at the diagnostics in shinystan, and print out: 1) the density plot of the posterior predictive distributions and the real data, and 2) the scatterplot of the posterior predictive distribution against the real data.  
+
+
+## Problem 3) Posterior model probabilities  
+
+#### A) Using the same dataset, calculate a new Y variable that is log(total.fruits+1) to account for the zero observations. Now use the Bayesfactor library to find the best combination of fixed effect predictor variables. Start with nutrient, treatment and the interaction. Leave out the random effects. Assume Y is normally distributed.  
+
+
+#### B) Plot the Bayes factors for all models. Which is better?  
+
+
+#### C) Calculate the odds for the best model vs. the 2nd best model. How much better is the best one?  
+
+
+
+
+
+
+  
+```{r, eval=FALSE, include=FALSE}
+rmarkdown::render(input = here("scripts","HW8_INLA-OtherLibs.Rmd"),
+                  output_file = here("renders","HW8_INLA-OtherLibs.pdf"),
+                  output_format = "pdf_document")
+```
