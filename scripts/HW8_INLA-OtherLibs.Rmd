@@ -60,6 +60,7 @@ library(DHARMa)
 library(lme4)
 library(rstanarm)
 library(shinystan)
+library(BayesFactor)
 
 theme_set(theme_bw(base_size=15))
 options(mc.cores = parallel::detectCores())
@@ -266,28 +267,73 @@ summary(fruit.negbinom.inla)
 
 #rstanarm results
 
-as_tibble(fruit.negbinom.rstanarm$stan_summary)
+rstanarm_summary <- rownames_to_column(as.data.frame(fruit.negbinom.rstanarm$stan_summary),"parameter") |> 
+  filter(parameter %in% c("(Intercept)","nutrient.factor8", "amd.factorunclipped"))
+
+rstanarm_summary
 
 ```
 
 
 #### B) Make a plot of the INLA mean predicted value against the rstan arm mean predictions, being sure you have them both in the original (not log) scale.  
 
+```{r}
+
+fruit.residuals |> 
+  mutate(rstanarm.fit = fruit.negbinom.rstanarm$fitted.values) |> 
+  ggplot(aes(x = rstanarm.fit, y = fit))+
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1)+
+  labs(x = "rstanarm", y = "INLA")
+
+
+```
+
 
 #### C) Look at the diagnostics in shinystan, and print out: 1) the density plot of the posterior predictive distributions and the real data, and 2) the scatterplot of the posterior predictive distribution against the real data.  
+```{r}
 
+#launch_shinystan(fruit.negbinom.rstanarm)
+
+```
+  
+  see attached word document for printed plots
 
 ## Problem 3) Posterior model probabilities  
 
 #### A) Using the same dataset, calculate a new Y variable that is log(total.fruits+1) to account for the zero observations. Now use the Bayesfactor library to find the best combination of fixed effect predictor variables. Start with nutrient, treatment and the interaction. Leave out the random effects. Assume Y is normally distributed.  
 
+```{r}
+arabidopsis.data.bf <- arabidopsis.data |> 
+  mutate(log_totalfruits = log(total.fruits + 1))
+
+fruit.bf <- anovaBF(log_totalfruits~nutrient.factor*amd.factor, data = arabidopsis.data.bf)
+
+fruit.bf
+
+```
+
 
 #### B) Plot the Bayes factors for all models. Which is better?  
+
+```{r}
+
+plot(fruit.bf)
+
+```
 
 
 #### C) Calculate the odds for the best model vs. the 2nd best model. How much better is the best one?  
 
 
+```{r}
+
+fruit.bf[3]/fruit.bf[1]
+
+plot(fruit.bf[3]/fruit.bf[1])
+
+
+```
 
 
 
