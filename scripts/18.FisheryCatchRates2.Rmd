@@ -1,0 +1,277 @@
+---
+title: "18. Analyzing fishery catch and catch rate data"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(gridExtra)
+theme_set(theme_bw())
+```
+
+
+## Simulated longline data delta lognormal. 
+
+Catch of blue marlin is BUM. Effort is in the column labelled hooks 
+
+```{r}
+obsdat<-read.csv("obsdat.csv") %>%
+  mutate(YearNum=as.numeric(as.factor(Year)),
+    light=as.numeric(as.factor(light)),
+    season=as.numeric(season),
+    present=ifelse(BUM>0,1,0))
+
+#Make plots
+ggplot(obsdat)+geom_histogram(aes(x=BUM/hooks),binwidth=0.1) +
+  ggtitle("Histogram of all CPUE")
+ggplot(filter(obsdat,BUM>0))+
+  geom_histogram(aes(x=log(BUM/hooks)),binwidth=0.2) +
+  ggtitle("Histogram of log catches where positive")
+
+```
+
+Data is very zero inflated
+
+Running models separately for model selection 
+
+```{r}
+#Binomial
+write("model  {
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b[i]~ dnorm(0, 1.0E-6) 
+ }
+  b[1]<-0
+  for(i in 2:Nseason) {
+   c[i]~ dnorm(0, 1.0E-6) 
+ }
+  c[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]+b[light[i]]+c[season[i]] 
+   present[i]~dbern(p[i])
+  }
+}
+",file="binomialLL.txt")
+
+obsList<-list(present=obsdat$present,
+  Year=obsdat$YearNum,
+  light=obsdat$light,
+  season=obsdat$season,
+  N=nrow(obsdat),
+  Nyear=length(unique(obsdat$Year)),
+  Nlight=length(unique(obsdat$light)),
+  Nseason=length(unique(obsdat$season)))
+
+binLL1<-jags(data=obsList,
+  model.file = "binomialLL.txt",
+  parameters.to.save=c("a","b","c"),
+  n.chains = 2,n.iter = 110000,n.burnin = 1000,n.thin=2)
+```
+
+Lognormal with same structure
+
+```{r}
+write("model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+  b2[1]<-0
+  for(i in 2:Nseason) {
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+  c2[1]<-0
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]]+b2[light2[i]]+c2[season2[i]] 
+   CPUE[i]~dlnorm(logMean[i],tau)
+  }
+}
+",file="lognormalLL.txt")
+
+obsdatPos<-filter(obsdat,BUM>0) %>%
+  mutate(CPUE=BUM/hooks)
+obsListPos<-list(CPUE=obsdatPos$CPUE,
+  Year2=obsdatPos$YearNum,
+  light2=obsdatPos$light,
+  season2=obsdatPos$season,
+  N2=nrow(obsdatPos),
+  Nyear=length(unique(obsdatPos$Year)),
+  Nlight=length(unique(obsdatPos$light)),
+  Nseason=length(unique(obsdatPos$season)))
+
+logLL1<-jags(data=obsListPos,
+  model.file = "lognormalLL.txt",
+  parameters.to.save=c("a2","b2","c2"),
+  n.chains = 2,n.iter = 110000,n.burnin = 1000,n.thin=2)
+
+```
+
+Integrated model
+
+```{r}
+#Make list of all data for combined model
+obsListAll<-c(obsList,obsListPos[1:5])
+
+#Print model for both model components together
+write("model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b[i]~ dnorm(0, 1.0E-6) 
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+  b[1]<-0
+  b2[1]<-0
+  for(i in 2:Nseason) {
+   c[i]~ dnorm(0, 1.0E-6) 
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+  c[1]<-0
+  c2[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]+b[light[i]]+c[season[i]] 
+   present[i]~dbern(p[i])
+  }
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]]+b2[light2[i]]+c2[season2[i]] 
+   CPUE[i]~dlnorm(logMean[i],tau)
+  }
+  for(i in 1:Nyear) {
+   mean.lnorm[i] <- exp(a2[i]+1/(2*tau))
+   logit(p.year[i])<-a[i]
+   total.mean[i] <-p.year[i]* mean.lnorm[i]
+  }
+}
+",file="DeltaLognormalGLM.txt")
+
+LL1jags<-jags(obsListAll, 
+  parameters.to.save=c("a","b","c","a2","b2","c2","mean.lnorm","p.year","total.mean"), 
+  model.file="DeltaLognormalGLM.txt",
+  n.chains=2, n.iter=100000, n.burnin=5000,n.thin=2)
+
+LL1<-LL1jags$BUGSoutput
+range(LL1$summary[,"n.eff"][LL1$summary[,"n.eff"]>1])
+range(LL1$summary[,"Rhat"])
+
+#Extract predictions
+Nyear=obsList$Nyear
+rows.p1<-paste("p.year[",1:Nyear,"]",sep="")
+rows.ln1<-paste("mean.lnorm[",1:Nyear,"]",sep="")
+rows.tot1<-paste("total.mean[",1:Nyear,"]",sep="")
+df1<-data.frame(LL1$summary[rows.p1,c("2.5%","50%","97.5%")])
+df3<-data.frame(LL1$summary[rows.ln1,c("2.5%","50%","97.5%")])
+df5<-data.frame(LL1$summary[rows.tot1,c("2.5%","50%","97.5%")])
+resdf1<-bind_rows(list(Probability=df1,Positive=df3,Total=df5),.id = "Type")%>%
+  mutate(Type=factor(Type,levels=c("Probability","Positive","Total")))
+names(resdf1)[2:4]<-c(c("min","med","max"))
+resdf1$Year<-rep(sort(unique(obsdat$Year)),3)
+
+#Plot
+ggplot(resdf1,aes(x=Year,y=med,ymin=min,ymax=max))+
+  geom_line(linewidth=1)+
+  geom_ribbon(alpha=0.3)+
+  facet_wrap(Type~.,scale="free")+
+  ylab("Index")
+```      
+
+LL model zero inflated Poisson
+
+```{r}
+write("model  {
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+#   b[i]~ dnorm(0, 1.0E-6) 
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+#  b[1]<-0
+  b2[1]<-0
+  for(i in 2:Nseason) {
+#   c[i]~ dnorm(0, 1.0E-6) 
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+ # c[1]<-0
+  c2[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   z[i]~dbern(p[i])
+   logMean[i]<-a2[Year[i]]+b2[light[i]]+c2[season[i]]
+   Mu[i]<-z[i]*exp(logMean[i])*hooks[i]
+   BUM[i]~dpois(Mu[i])
+  }
+  for(i in 1:Nyear) {
+   predmean[i] <- exp(a2[i])
+   logit(predp[i])<-a[i]
+   total.mean[i] <-predp[i] * predmean[i]
+  }
+}
+",file="ZIP.txt")
+
+obsListZip<-list(BUM=obsdat$BUM,
+  hooks=obsdat$hooks,
+  Year=obsdat$YearNum,
+  light=obsdat$light,
+  season=obsdat$season,
+  N=nrow(obsdat),
+  Nyear=length(unique(obsdat$Year)),
+  Nlight=length(unique(obsdat$light)),
+  Nseason=length(unique(obsdat$season)))
+
+#This doesn't seem to work without initial values, and it needs a lot of iterations
+init1<-list(z=obsdat$present)
+LL2jags<-jags(obsListZip, inits=list(init1,init1), parameters.to.save=c("predmean","predp","total.mean"), 
+              model.file="ZIP.txt",
+              n.chains=2, n.iter=110000, 
+              n.burnin=10000,n.thin=2)
+
+LL2<-LL2jags$BUGSoutput
+range(LL2$summary[,"n.eff"][LL2$summary[,"n.eff"]>1])
+range(LL2$summary[,"Rhat"])
+
+#Extract predictions
+Nyear=obsListZip$Nyear
+rows.p1<-paste("predp[",1:Nyear,"]",sep="")
+rows.ln1<-paste("predmean[",1:Nyear,"]",sep="")
+rows.tot1<-paste("total.mean[",1:Nyear,"]",sep="")
+df1<-data.frame(LL2$summary[rows.p1,c("2.5%","50%","97.5%")])
+df3<-data.frame(LL2$summary[rows.ln1,c("2.5%","50%","97.5%")])
+df5<-data.frame(LL2$summary[rows.tot1,c("2.5%","50%","97.5%")])
+resdf2<-bind_rows(list(Probability=df1,Positive=df3,Total=df5),.id = "Type")%>%
+  mutate(Type=factor(Type,levels=c("Probability","Positive","Total")))
+names(resdf2)[2:4]<-c(c("min","med","max"))
+resdf2$Year<-rep(sort(unique(obsdat$Year)),3)
+
+#Plot
+ggplot(resdf2,aes(x=Year,y=med,ymin=min,ymax=max))+
+  geom_line(linewidth=1)+
+  geom_ribbon(alpha=0.3)+
+  facet_wrap(Type~.)
+```
+
+Plot of both models
+
+```{r}
+resdfall<-bind_rows(list(Lognormal=resdf1,
+  ZIP=resdf2),.id="Model")
+
+ggplot(resdfall,aes(x=Year,y=med,ymin=min,ymax=max,col=Model,fill=Model))+
+  geom_line(linewidth=1)+
+  geom_ribbon(alpha=0.3)+
+  facet_wrap(Type~.,ncol=3)+
+  ylab("Index")
+
+```
+
