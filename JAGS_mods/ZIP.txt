@@ -1,0 +1,31 @@
+model  {
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+#   b[i]~ dnorm(0, 1.0E-6) 
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+#  b[1]<-0
+  b2[1]<-0
+  for(i in 2:Nseason) {
+#   c[i]~ dnorm(0, 1.0E-6) 
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+ # c[1]<-0
+  c2[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   z[i]~dbern(p[i])
+   logMean[i]<-a2[Year[i]]+b2[light[i]]+c2[season[i]]
+   Mu[i]<-z[i]*exp(logMean[i])*hooks[i]
+   BUM[i]~dpois(Mu[i])
+  }
+  for(i in 1:Nyear) {
+   predmean[i] <- exp(a2[i])
+   logit(predp[i])<-a[i]
+   total.mean[i] <-predp[i] * predmean[i]
+  }
+}
+

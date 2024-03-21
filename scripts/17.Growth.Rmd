@@ -13,6 +13,7 @@ library(rstan)
 library(loo)
 library(gridExtra)
 library(shinystan)
+library(here)
 theme_set(theme_bw())
 options(mc.cores = parallel::detectCores())
 rstan_options(auto_write = TRUE)
@@ -22,7 +23,7 @@ rstan_options(auto_write = TRUE)
 ## Yellowtail example
 
 ```{r}
-yellowtail<-read.csv("yellowtail.csv")
+yellowtail<-read.csv(here("data","yellowtail.csv"))
 summary(yellowtail)
 ggplot(yellowtail, aes(x=Age,y=ObsL))+
  geom_point()+xlab("Age")+ylab("Length")
@@ -53,7 +54,7 @@ write("model {
     chi.square.rep<-sum(rep.sresid2[])
     p.value<-step(chi.square.obs-chi.square.rep)
 }
-",file="VonBertLnorm.txt")
+",file=here("JAGS_mods","VonBertLnorm.txt"))
 
 init1=list(tau=1,Linf=1200,K=0.6,Age0=-0.1)
 init2=list(tau=0.5,Linf=1000,K=0.4,Age0=-0.3)
@@ -61,7 +62,7 @@ init2=list(tau=0.5,Linf=1000,K=0.4,Age0=-0.3)
 yellowtailList=list(N=dim(yellowtail)[1],Age=yellowtail$Age,ObsL=yellowtail$ObsL)
 
 res1jags=jags(yellowtailList,list(init1,init2),
-  model.file="VonBertLnorm.txt",
+  model.file=here("JAGS_mods","VonBertLnorm.txt"),
                 parameters.to.save=c("K","Linf","tau","Age0","p.value",
                   "resid","PredL","repL","chi.square.obs","chi.square.rep"),
                 n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
@@ -105,12 +106,12 @@ write("model
     chi.square.rep<-sum(rep.sresid2[])
     p.value<-step(chi.square.obs-chi.square.rep)
 }
-",file="VonBertLnormSchnute.txt")
+",file=here("JAGS_mods","VonBertLnormSchnute.txt"))
 
 init1=list(tau=1,L1=500,L2=1200,K=0.6)
 init2=list(tau=0.5,L1=400,L2=1000,K=0.4)
 
-res2jags<-jags(yellowtailList,list(init1,init2),model.file="VonBertLnormSchnute.txt",
+res2jags<-jags(yellowtailList,list(init1,init2),model.file=here("JAGS_mods","VonBertLnormSchnute.txt"),
               parameters.to.save=c("K","Linf","L1","L2","tau","p.value",
                 "resid","PredL","logPredL", "chi.square.obs","chi.square.rep","Prob"),
               n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
@@ -175,11 +176,11 @@ write("model {
  chi.square.obs<-sum(sresid2[])
  chi.square.rep<-sum(rep.sresid2[])
  p.value<-step(chi.square.obs-chi.square.rep)
-}","VonBertNormalSchnute.txt")
+}",here("JAGS_mods","VonBertNormalSchnute.txt"))
 
 init1<-list(tau=1,L1=500,L2=1200,K=0.6)
 init2<-list(tau=0.5,L1=400,L2=1000,K=0.4)
-res3jags<-jags(yellowtailList,list(init1,init2),model.file="VonBertNormalSchnute.txt",
+res3jags<-jags(yellowtailList,list(init1,init2),model.file=here("JAGS_mods","VonBertNormalSchnute.txt"),
               parameters.to.save=c("K","Linf","L1","L2","tau","p.value","resid","PredL","Rep",
                                    "chi.square.obs","chi.square.rep","Prob"),
               n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
@@ -245,8 +246,8 @@ generated quantities {
   }
 }
 ",
-  file="stanGrowthLN.stan")
-yellowtailStan1<-stan(file="stanGrowthLN.stan",
+  file=here("STAN_docs","stanGrowthLN.stan"))
+yellowtailStan1<-stan(file=here("STAN_docs","stanGrowthLN.stan"),
   data=yellowtailList)
 obsL<-yellowtail$ObsL #This makes the y variable discoverable 
 #launch_shinystan(yellowtailStan1)
@@ -303,12 +304,12 @@ generated quantities {
   }
 }
 ",
-  file="stanGrowthLNSchnute.stan")
+  file=here("STAN_docs","stanGrowthLNSchnute.stan"))
 
 yellowtailList2=list(N=dim(yellowtail)[1],Age=yellowtail$Age,ObsL=yellowtail$ObsL,
   Age1=1,Age2=8)
 
-yellowtailStan2<-stan(file="stanGrowthLNSchnute.stan",
+yellowtailStan2<-stan(file=here("STAN_docs","stanGrowthLNSchnute.stan"),
   data=yellowtailList2)
 print(yellowtailStan2,par=c("L1","L2","K","sigma","Linf"))
 #launch_shinystan(yellowtailStan2)
@@ -345,10 +346,10 @@ write("model {
   log(sigma2) <- 2*log.sigma
   log.sigma    ~ dunif(-10, 10)
   for (j in 1:n) {resx[j] <- x[j] - z[j]}
-}",file="dugong.txt")
+}",file=here("JAGS_mods","dugong.txt"))
 init1<-list(alpha = 3, beta = 2, gamma = 0.9, log.sigma = -5)
 init2<-list(alpha = 2, beta = 1, gamma = 0.7, log.sigma = -4)
-resdug<-jags(dugong,list(init1,init2),model.file="dugong.txt",
+resdug<-jags(dugong,list(init1,init2),model.file=here("JAGS_mods","dugong.txt"),
   parameters.to.save=c("alpha","beta","gamma","z","resx","mu","sigma2"),
   n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
 range(resdug$BUGSoutput$summary[,"n.eff"])
@@ -378,8 +379,8 @@ write("model {
   tau         <- 1/sigma2
   log(sigma2) <- 2*log.sigma
   log.sigma    ~ dunif(-10, 10)
-}",file="dugongNoError.txt")
-resdug2<-jags(dugong,list(init1,init2),model.file="dugongNoError.txt",
+}",file=here("JAGS_mods","dugongNoError.txt"))
+resdug2<-jags(dugong,list(init1,init2),model.file=here("JAGS_mods","dugongNoError.txt"),
   parameters.to.save=c("alpha","beta","gamma","mu","sigma2"),
   n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
 
@@ -398,7 +399,7 @@ ggplot(df1)+geom_point(aes(x=Age,y=Length))+
 ##  For abalone from Zhang et al. 2009
 
 ```{r}
-abalone<-read.csv("abalone.csv")
+abalone<-read.csv(here("data","abalone.csv"))
 summary(abalone)
 altbacoreList<-as.list(abalone[,2:7])
 for(i in 1:6)
@@ -434,8 +435,8 @@ write("model   {
   s~dunif(0,100)   #for random Age at 1st capture
   r~dunif(0,100)
 }
-",file="growthZhangOriginalJags.txt")
-zhang1j<-jags(altbacoreList,list(init1,init2),model.file="growthZhangOriginalJags.txt",
+",file=here("JAGS_mods","growthZhangOriginalJags.txt"))
+zhang1j<-jags(altbacoreList,list(init1,init2),model.file=here("JAGS_mods","growthZhangOriginalJags.txt"),
               parameters.to.save=c("Linf","K","A","s","r","Lmean","Ltau","Kmean","Ktau"),
               n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
 range(zhang1j$BUGSoutput$summary[,"n.eff"])

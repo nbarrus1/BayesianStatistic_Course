@@ -1,0 +1,33 @@
+model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b[i]~ dnorm(0, 1.0E-6) 
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+  b[1]<-0
+  b2[1]<-0
+  for(i in 2:Nseason) {
+   c[i]~ dnorm(0, 1.0E-6) 
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+  c[1]<-0
+  c2[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]+b[light[i]]+c[season[i]] 
+   present[i]~dbern(p[i])
+  }
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]]+b2[light2[i]]+c2[season2[i]] 
+   CPUE[i]~dlnorm(logMean[i],tau)
+  }
+  for(i in 1:Nyear) {
+   mean.lnorm[i] <- exp(a2[i]+1/(2*tau))
+   logit(p.year[i])<-a[i]
+   total.mean[i] <-p.year[i]* mean.lnorm[i]
+  }
+}
+

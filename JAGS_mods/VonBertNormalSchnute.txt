@@ -1,0 +1,24 @@
+model {
+  for (i in 1:N){ 
+   PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K*(Age2 -Age1))) 	#  model prediction  
+   ObsL[i] ~ dnorm(PredL[i], tau)  	#Normal likelihood
+   resid[i] <- ObsL[i] - PredL[i]  # residuals
+   Rep[i] ~ dnorm(PredL[i], tau) #  replicated data set
+   Prob[i] <- step(Rep[i] - ObsL[i])  # Probability replicated data>real data
+   sresid2[i]<-(ObsL[i]-PredL[i])*(ObsL[i]-PredL[i])*tau   # standardized residuals squared
+   rep.sresid2[i]<-(Rep[i]-PredL[i])*(Rep[i]-PredL[i])*tau  # replicated sresid squared
+}
+ #priors specification
+ K ~ dunif(0,2)
+ Age1<-2
+ Age2<-7
+ L1~dunif(10,3000) 	
+ L2~dunif(10,3000) 	
+ tau~dgamma(0.001,0.001)
+ #Derived parameters
+ Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+ mean.prob<-mean(Prob[])
+ chi.square.obs<-sum(sresid2[])
+ chi.square.rep<-sum(rep.sresid2[])
+ p.value<-step(chi.square.obs-chi.square.rep)
+}

@@ -1,0 +1,279 @@
+---
+title: "7. Fixed and random effects, INLA"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE}
+library(INLA)
+library(INLAutils)
+library(tidyverse)
+library(R2jags)
+library(rstan)
+library(loo)
+library(ggmcmc)
+```
+
+
+## 1. Moth fixed effects
+
+```{r}
+moth<-read.csv("moth.csv")
+summary(moth)
+
+#Recode the factors as numbers for JAGS
+moth$LocationNum<-as.numeric(factor(moth$Location))
+moth$BaitNum<-as.numeric(factor(moth$Bait))
+summary(moth)
+ggplot(moth,aes(x=Location,y=Moths,color=Bait))+stat_summary()
+```
+
+Judging from the summary figure, it looks like there are differences between the locations, but no consistent pattern in the bait types. 
+
+# Number 1a
+```{r}
+write("model   # Main effects only
+{
+ a~dnorm(0,1.0E-6) #intercept
+ b[1]<-0
+ for(i in 2:4) {  #Effect of location
+   b[i]~dnorm(0,1.0E-6)  
+ }   
+ c[1]<-0
+ for(i in 2:3)  {
+  c[i]~dnorm(0,1.0E-6)   
+ }  
+ prec~dgamma(0.001,0.001)  #Precision
+ for(i in 1:60)  {
+  ybar[i]<-a+b[LocationNum[i]]+c[BaitNum[i]] 
+  Moths[i]~dnorm(ybar[i],prec)
+  LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(Moths[i]-ybar[i])^2*prec
+ }
+}
+",file="ModelHW7.1a.txt")
+
+res7.1a<-jags(moth,model.file="ModelHW7.1a.txt",
+              parameters.to.save=c("a","b","c","prec","LL"),
+              n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
+
+range(res7.1a$BUGSoutput$summary[,"Rhat"])
+range(res7.1a$BUGSoutput$summary[,"n.eff"][res7.1a$BUGSoutput$summary[,"n.eff"]>1])
+##  summary statistics
+round(res7.1a$BUGSoutput$summary[!grepl("LL",rownames(res7.1a$BUGSoutput$summary)),],3)
+```
+
+Two locations in the tree, lower and middle (b[2] and b[3]) appear to have higher means than the ground (reference level b[1]), but the top of the tree b[2] includes 0 in the credible interval. The credible intervals of the bait types c[2] and c[3] include zero, implying they are not different from reference level c[1] (Chemical). 
+
+# Number 1b. add interactions
+
+```{r}
+write("model   # with interactions
+{
+ a~dnorm(0,1.0E-6) #intercept
+ b[1]<-0
+ for(i in 2:4) {  #Effect of location
+   b[i]~dnorm(0,1.0E-6)  
+ }   
+ c[1]<-0
+ for(i in 2:3)  {
+  c[i]~dnorm(0,1.0E-6)   
+ }  
+ for(i in 1:4) {int[i,1] <- 0}
+ for(j in 2:3) {int[1,j] <- 0}
+ for(i in 2:4) {
+  for(j in 2:3) {
+    int[i,j]~dnorm(0,1.0E-6)
+  }
+ }
+ prec~dgamma(0.001,0.001)  #Precision
+ for(i in 1:60)  {
+  ybar[i]<-a+b[LocationNum[i]]+c[BaitNum[i]]+int[LocationNum[i],BaitNum[i]]
+  Moths[i]~dnorm(ybar[i],prec)
+  LL[i]<- -log(1/sqrt(prec))-0.5*log(2*3.14159)-0.5*(Moths[i]-ybar[i])^2*prec
+ }
+}
+",file="ModelHW7.1b.txt")
+
+res7.1b<-jags(moth,model.file="ModelHW7.1b.txt",
+  parameters.to.save=c("a","b","c","int","prec","LL"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
+round(res7.1b$BUGSoutput$summary[!grepl("LL",rownames(res7.1b$BUGSoutput$summary)),],3)
+```
+None of the interactions appear significant either, as their credible intervals all include 0. 
+
+## 1c WAIC table
+
+```{r}
+LLa<-res7.1a$BUGSoutput$sims.matrix[,paste0("LL[",1:nrow(moth),"]")]
+LLb<-res7.1b$BUGSoutput$sims.matrix[,paste0("LL[",1:nrow(moth),"]")]
+waictab<-data.frame(Model=c("Main","Interaction"),
+  WAIC=c(waic(LLa)$estimate[3,1],waic(LLb)$estimate[3,1]))
+waictab$delta<-waictab$WAIC-min(waictab$WAIC)
+waictab
+```
+
+The model without interactions is much better, according to the WAIC. This makes sense as none of the interactions were different from zero. We might also want to try a model with only location, since bait did not seem important. 
+
+## Problem 2 Random effects
+
+## a
+
+```{r}
+football<-read.csv("football.csv")
+summary(football)
+dim(football)
+
+write("model{
+sd.team~dexp(0.004)
+tau.team<-1/(sd.team*sd.team)
+sd.within~dexp(0.004)
+tau.within<-1/(sd.within*sd.within)
+base~dnorm(0,1.0E-6)
+for(i in 1:5) { 
+ team.effect[i]~dnorm(0,tau.team)
+ team.mean[i]<-base+team.effect[i]
+}
+for(i in 1:85)
+{
+ ybar[i]<-base+team.effect[Team[i]]
+ Weight[i]~dnorm(ybar[i],tau.within)
+ LL[i]<- -log(1/sqrt(tau.within))-0.5*log(2*3.14159)-0.5*(Weight[i]-ybar[i])^2*tau.within
+}
+}",file="ModelHW7.2a.txt")
+
+res7.2a<-jags(football,
+          model.file="ModelHW7.2a.txt",
+          parameters.to.save=c("base","sd.team","sd.within","team.effect","LL","team.mean"),
+          n.chains=2,n.iter=100000,n.burnin=10000,n.thin=4)
+range(res7.2a$BUGSoutput$summary[,"n.eff"])
+range(res7.2a$BUGSoutput$summary[,"Rhat"])
+round(res7.2a$BUGSoutput$summary[!grepl("LL",rownames(res7.2a$BUGSoutput$summary)),],2)
+ggs7.2a<-ggs(as.mcmc(res7.2a))
+ggs_caterpillar(ggs7.2a,family="team.effect",sort = FALSE)
+#or
+ggs_caterpillar(ggs7.2a,family="team.mean",sort = FALSE)
+
+```
+
+The teams do not appear to be very different.
+
+## Problem 2b
+
+```{r}
+round(res7.2a$BUGSoutput$summary[c("sd.team","sd.within"),],2)
+```
+
+The mean value of the standard deviation between teams is lower than the mean sd within teams. Also, the credible interval is very wide for the sd between teams. Thus, there is no evidence to support much of a team effect. Players vary more within than between teams. 
+
+## Problem 2c. Null model
+
+```{r}
+write("model{
+sd.within~dexp(0.004)
+tau.within<-1/(sd.within*sd.within)
+base~dnorm(0,1.0E-6)
+for(i in 1:85)
+{
+ ybar[i]<-base
+ Weight[i]~dnorm(ybar[i],tau.within)
+ LL[i]<- -log(1/sqrt(tau.within))-0.5*log(2*3.14159)-0.5*(Weight[i]-ybar[i])^2*tau.within
+}
+}",file="ModelHW7.2c.txt")
+
+res7.2c<-jags(football,
+  model.file="ModelHW7.2c.txt",
+  parameters.to.save=c("sd.within","base","LL"),
+  n.chains=2,n.iter=110000,n.burnin=10000,n.thin=4)
+range(res7.2c$BUGSoutput$summary[,"n.eff"])
+range(res7.2c$BUGSoutput$summary[,"Rhat"])
+round(res7.2c$BUGSoutput$summary[!grepl("LL",rownames(res7.2c$BUGSoutput$summary)),],2)
+
+LL2a<-res7.2a$BUGSoutput$sims.matrix[,paste0("LL[",1:nrow(football),"]")]
+LL2c<-res7.2c$BUGSoutput$sims.matrix[,paste0("LL[",1:nrow(football),"]")]
+waictab<-data.frame(model=c("Random effect","Null"),
+                  WAIC=c(waic(LL2a)$estimate[3,1],waic(LL2c)$estimate[3,1]))
+waictab$deltaWAIC<-waictab$WAIC-min(waictab$WAIC)
+waictab
+```
+The delta WAIC between the null model and the full model was only `r round(waictab[2,2]-waictab[1,2],2)`, meaning that the model with the team effect was  slightly worse than the null model, but the models were very similar. There is no support for a team random effect in this data.
+
+## 2d. Random vs. fixed
+
+You could make teams a fixed effect if you were interested in knowning the average weight of these particular teams, and whether they were significantly different from each other.  Random effects are better for looking at how much variance there is between teams. 
+
+## 3 Same in INLA
+
+## a. Moth in INLA
+
+```{r}
+moth1<-inla(Moths~Location+Bait,data=moth,
+  control.compute=list(dic=TRUE,waic=TRUE))
+summary(moth1)
+autoplot(moth1)
+moth2<-inla(Moths~Location*Bait,data=moth,
+  control.compute=list(dic=TRUE,waic=TRUE))
+summary(moth2)
+autoplot(moth2)
+moth3<-inla(Moths~Location,data=moth,
+  control.compute=list(dic=TRUE,waic=TRUE))
+summary(moth3)
+autoplot(moth3)
+```
+
+The results do look similar, and the treatment contrast is set up the same in INLA as it was in JAGS.
+
+## 3b. Moth comparison
+
+```{r}
+modtab<-data.frame(Formula=c("Location+bait","Location*bait","Location"),
+  WAIC=c(moth1$waic$waic,moth2$waic$waic,moth3$waic$waic),
+  DIC=c(moth1$dic$dic,moth2$dic$dic,moth3$dic$dic)) %>%
+  mutate(deltaWAIC=WAIC-min(WAIC),
+    deltaDIC=DIC-min(DIC))
+modtab  
+```
+
+The location only model is best for both DIC and WAIC. The one with location plus bait is second best. The WAIC values were similar to the values from JAGS for the first two models, as expected.
+
+# c. Residuals
+
+```{r}
+moth3<-inla(Moths~Location,data=moth,
+  control.compute=list(dic=TRUE,waic=TRUE),
+  control.predictor=list(compute=TRUE))
+mothfit<-data.frame(moth3$summary.fitted.values) %>%
+  bind_cols(moth) %>%
+  mutate(residual=Moths-mean)
+ggplot(mothfit,aes(x=mean,y=residual))+
+  geom_point(position=position_jitter(width=0.4))+
+  geom_abline(intercept=0,slope=0)
+ggplot(mothfit,aes(sample=residual))+
+  geom_qq()+
+  geom_qq_line()
+```
+
+The distribution of the residuals seem to be a bit more spread out to the right in the residual plot. Lognormal might be worth trying. Since the data are counts, Poisson or negative binomial might also be appropriate. 
+
+## d. Footbal
+
+```{r}
+football1<-inla(Weight~1+f(Team,model="iid"),data=football,
+  control.compute=list(dic=TRUE,waic=TRUE))
+football2<-inla(Weight~1,data=football,
+  control.compute=list(dic=TRUE,waic=TRUE))
+summary(football1)
+autoplot(football1)
+summary(football2)
+autoplot(football2)
+
+modtab<-data.frame(Formula=c("Team","Null"),
+  WAIC=c(football1$waic$waic,football2$waic$waic),
+  DIC=c(football1$dic$dic,football2$dic$dic)) %>%
+  mutate(deltaWAIC=WAIC-min(WAIC),
+    deltaDIC=DIC-min(DIC))
+modtab  
+
+```
+
+Results are similar. The random effect does not improve the model relative to the null model. 

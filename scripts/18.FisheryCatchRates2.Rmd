@@ -9,6 +9,7 @@ output: html_document
 library(R2jags)
 library(tidyverse)
 library(gridExtra)
+library(here)
 theme_set(theme_bw())
 ```
 
@@ -18,7 +19,7 @@ theme_set(theme_bw())
 Catch of blue marlin is BUM. Effort is in the column labelled hooks 
 
 ```{r}
-obsdat<-read.csv("obsdat.csv") %>%
+obsdat<-read.csv(here("data", "obsdat.csv")) %>%
   mutate(YearNum=as.numeric(as.factor(Year)),
     light=as.numeric(as.factor(light)),
     season=as.numeric(season),
@@ -56,7 +57,7 @@ write("model  {
    present[i]~dbern(p[i])
   }
 }
-",file="binomialLL.txt")
+",file=here("JAGS_mods", "binomialLL.txt"))
 
 obsList<-list(present=obsdat$present,
   Year=obsdat$YearNum,
@@ -68,7 +69,7 @@ obsList<-list(present=obsdat$present,
   Nseason=length(unique(obsdat$season)))
 
 binLL1<-jags(data=obsList,
-  model.file = "binomialLL.txt",
+  model.file = here("JAGS_mods", "binomialLL.txt"),
   parameters.to.save=c("a","b","c"),
   n.chains = 2,n.iter = 110000,n.burnin = 1000,n.thin=2)
 ```
@@ -94,7 +95,7 @@ write("model  {
    CPUE[i]~dlnorm(logMean[i],tau)
   }
 }
-",file="lognormalLL.txt")
+",file=here("JAGS_mods", "lognormalLL.txt"))
 
 obsdatPos<-filter(obsdat,BUM>0) %>%
   mutate(CPUE=BUM/hooks)
@@ -108,7 +109,7 @@ obsListPos<-list(CPUE=obsdatPos$CPUE,
   Nseason=length(unique(obsdatPos$season)))
 
 logLL1<-jags(data=obsListPos,
-  model.file = "lognormalLL.txt",
+  model.file = here("JAGS_mods", "lognormalLL.txt"),
   parameters.to.save=c("a2","b2","c2"),
   n.chains = 2,n.iter = 110000,n.burnin = 1000,n.thin=2)
 
@@ -153,11 +154,11 @@ write("model  {
    total.mean[i] <-p.year[i]* mean.lnorm[i]
   }
 }
-",file="DeltaLognormalGLM.txt")
+",file=here("JAGS_mods","DeltaLognormalGLM.txt"))
 
 LL1jags<-jags(obsListAll, 
   parameters.to.save=c("a","b","c","a2","b2","c2","mean.lnorm","p.year","total.mean"), 
-  model.file="DeltaLognormalGLM.txt",
+  model.file=here("JAGS_mods","DeltaLognormalGLM.txt"),
   n.chains=2, n.iter=100000, n.burnin=5000,n.thin=2)
 
 LL1<-LL1jags$BUGSoutput
@@ -218,7 +219,7 @@ write("model  {
    total.mean[i] <-predp[i] * predmean[i]
   }
 }
-",file="ZIP.txt")
+",file=here("JAGS_mods","ZIP.txt"))
 
 obsListZip<-list(BUM=obsdat$BUM,
   hooks=obsdat$hooks,
@@ -233,7 +234,7 @@ obsListZip<-list(BUM=obsdat$BUM,
 #This doesn't seem to work without initial values, and it needs a lot of iterations
 init1<-list(z=obsdat$present)
 LL2jags<-jags(obsListZip, inits=list(init1,init1), parameters.to.save=c("predmean","predp","total.mean"), 
-              model.file="ZIP.txt",
+              model.file=here("JAGS_mods","ZIP.txt"),
               n.chains=2, n.iter=110000, 
               n.burnin=10000,n.thin=2)
 

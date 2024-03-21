@@ -1,0 +1,29 @@
+model   {
+ for (i in 1:24)  {  # all recap individuals
+    # Each individual draws Linf, K, and age
+   Linf[i]~dnorm(Lmean,Ltau) # random Linf
+   K[i]~dnorm(Kmean,Ktau) # random K
+   A[i]~dgamma(s,r)T(0.5, 30) #random age
+   # Predict size at capture and first recapture
+   Lpred0[i]<-Linf[i]*(1-exp(-K[i]*A[i]))  
+    Lpred1[i]<-Linf[i]*(1-exp(-K[i]*(A[i]+deltime[i])))
+   #Likelihood of measured sizes  
+    Ltag[i]~dnorm(Lpred0[i],tau)     
+    Lrec[i]~dnorm(Lpred1[i],tau)
+  } 
+ for(i in 1:7)  {  # all with 2 recaps   
+   Lpred2[i]<-Linf[indiv2[i]]*(1-exp(-K[indiv2[i]]*(A[indiv2[i]]+deltime[i]+deltime2[i])))
+   Lrec2[i]~dnorm(Lpred2[i],tau)
+}
+ # priors specification (all random effects)
+  Ltau~dgamma(0.001,0.0001)
+  Lvar<-1/Ltau
+  Ktau~dgamma(0.001,0.0001)
+  Kvar<-1/Ktau
+  Lmean~dnorm(100,1.0E-6)T(0,)
+  Kmean~dbeta(1,1)
+  tau~dgamma(0.0001,0.0001)
+  s~dunif(0,100)   #for random Age at 1st capture
+  r~dunif(0,100)
+}
+

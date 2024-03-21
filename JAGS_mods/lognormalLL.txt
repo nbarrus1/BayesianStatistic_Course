@@ -1,0 +1,19 @@
+model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b2[i]~ dnorm(0, 1.0E-6) 
+ }
+  b2[1]<-0
+  for(i in 2:Nseason) {
+   c2[i]~ dnorm(0, 1.0E-6) 
+ }
+  c2[1]<-0
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]]+b2[light2[i]]+c2[season2[i]] 
+   CPUE[i]~dlnorm(logMean[i],tau)
+  }
+}
+

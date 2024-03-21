@@ -1,0 +1,23 @@
+model {
+	for (i in 1:N){ 
+		PredL[i] <- Linf * (1 - exp(- K* (Age[i] -Age0))) 	# model prediction  
+		logPredL[i] <- log(PredL[i])  	# log-transformation of pred.value
+		ObsL[i] ~ dlnorm(logPredL[i], tau)  	# lognormal likelihood
+		logObsL[i] <-log(ObsL[i]) 	     # log transfomration of observed value
+		 resid[i] <- logObsL[i]-logPredL[i]  # residuals
+	 	repL[i] ~ dlnorm(logPredL[i], tau) # replicated data set
+	 	logRep[i] <-log(repL[i]) # replicated data set
+   sresid2[i]<-(logObsL[i]-logPredL[i])*(logObsL[i]-logPredL[i])*tau   # stand. residuals squared
+   rep.sresid2[i]<-(logRep[i]-logPredL[i])*(logRep[i]-logPredL[i])*tau  # replicated sresid squared
+}
+ #priors specification
+  K ~ dunif(0,4)
+  Age0~ dunif(-15,0)
+  Linf ~ dunif(10,3000) 	
+  tau~dgamma(0.001,0.001)
+  #Derived parameters
+    chi.square.obs<-sum(sresid2[])
+    chi.square.rep<-sum(rep.sresid2[])
+    p.value<-step(chi.square.obs-chi.square.rep)
+}
+

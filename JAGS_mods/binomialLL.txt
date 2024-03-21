@@ -1,0 +1,18 @@
+model  {
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 2:Nlight) {
+   b[i]~ dnorm(0, 1.0E-6) 
+ }
+  b[1]<-0
+  for(i in 2:Nseason) {
+   c[i]~ dnorm(0, 1.0E-6) 
+ }
+  c[1]<-0
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]+b[light[i]]+c[season[i]] 
+   present[i]~dbern(p[i])
+  }
+}
+
