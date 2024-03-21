@@ -176,7 +176,7 @@ fruit.gaussian.inla <-inla(total.fruits~nutrient.factor +
 
 ```{r}
 
-WAIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
+DIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
                                "Zero Inflated Poisson", "Gaussian"),
                     dic = c(fruit.poisson.inla$dic$dic,
                              fruit.negbinom.inla$dic$dic,
@@ -185,7 +185,7 @@ WAIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
   mutate(deltaDIC = dic - min(dic),
          weight = round(exp(-2*deltaDIC)/sum(exp(-2*deltaDIC)),digits = 5))
 
-WAIC.table  |> knitr::kable(caption = "DIC Table")
+DIC.table  |> knitr::kable(caption = "DIC Table")
 
 ```
 
