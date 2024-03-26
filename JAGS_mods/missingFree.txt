@@ -1,0 +1,22 @@
+model
+{
+  a ~ dnorm(0, 1.0E-6)  # the intercept term
+  for (i in 1:6)  # the 6 regression coefficients
+  {
+    b[i] ~ dnorm(0, 1.0E-6)  # uninformative priors
+  }
+
+  mnr <- 1.178125  # means of the explanatory variables
+  mv <- mean(volcanic[])
+  mrc <- mean(rockcell[])
+  msl <- mean(nearslope[])
+  mso <- mean(nearsouth[])
+  lambda~dlnorm(0,1.0E-6)
+  for (i in 1:325)  # for each of the sites
+  {
+    logit(p[i]) <- a + b[1]*(numrock[i]-mnr) + b[2]*(volcanic[i]-mv) + b[3]*(rockcell[i]-mrc) + b[4]*(nearslope[i]-msl) + b[5]*(nearslope[i]-msl)*(nearslope[i]-msl) + b[6]*(nearsouth[i]-mso)
+    lr[i] ~ dbern(p[i])  # observed occurrence drawn from a Bernoulli dist'n
+    numrock[i]~dpois(lambda)
+ }
+}
+

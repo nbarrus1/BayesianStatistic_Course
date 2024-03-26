@@ -1,0 +1,33 @@
+model{
+ for(t in 1:T){ # T = Number Years
+  for(j in 1:J){ # J = Number Days
+    Ycensored[t, j] ~ dinterval(Y[t, j], PartialY[t, j])
+    Y[t, j] ~ dpois(lambda[t, j])           #  Rewriting the 
+    lambda[t, j] <- mu[t, j] * v[t, j]      #  Negative-binomial as 
+    v[t, j] ~ dgamma(kappa[t], kappa[t])    #  a gamma-Poisson mixture  
+    log(mu[t, j]) <- lnalpha[t] - log(beta[t]) +  (m[t] - j) / beta[t] - exp((m[t] - j) / beta[t]) 
+  }#j
+  lnalpha[t] ~ dgamma(alphaa, alphab)
+  kappa[t] ~ dgamma(kappaa, kappab)
+  m[t] ~ dgamma(ma, mb)
+  beta[t] ~ dgamma(betaa, betab)
+  esc[t] <- sum(Y[t, 1:J])
+}#t
+alphaa<- alphamu * alphamu / alphasig2
+alphab<- alphamu / alphasig2
+alphamu ~ dexp(0.0001)
+alphasig2 ~ dexp(0.0001)
+kappaa<- kappamu * kappamu / kappasig2
+kappab<- kappamu / kappasig2
+kappamu ~ dexp(0.0001)
+kappasig2 ~ dexp(0.0001)
+ma <- mmu * mmu / msig2
+mb<- mmu / msig2
+mmu ~ dexp(0.0001)
+msig2 ~ dexp(0.0001)
+betaa<- betamu * betamu / betasig2
+betab<- betamu / betasig2
+betamu ~ dexp(0.0001)
+betasig2 ~ dexp(0.0001)
+}
+

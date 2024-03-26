@@ -1,0 +1,12 @@
+model {
+	for (i in 1:N){ 
+		PredL[i] <- Linf * (1 - exp(- K* (Age[i] -Age0))) 	# model prediction  
+		ObsL[i] ~ dnorm(PredL[i], tau)T(575,)  	# truncated normal likelihood
+}
+ #priors specification
+  K ~ dunif(0,2)
+  Age0~ dunif(-15,0)
+  Linf ~ dunif(10,2000) 	
+  tau~dgamma(0.001,0.001)
+}
+

@@ -1,0 +1,227 @@
+---
+title: "19. Missing data"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(gridExtra)
+library(here)
+theme_set(theme_bw())
+```
+
+## Fit the Jaspar salmon model to simulated data
+
+```{r}
+## Simulate data like the salmon escapement in Jasper
+nyear<-10
+#Parameter values from the paper
+parvals<-data.frame(par=c("lna","b","m","k"),
+  mean=c(9.09,6.60,18.12,4.65),
+  var=c(0.38,1.38,16.65,4.54)) %>%
+  mutate(s=mean^2/var,
+    r=mean/var)
+#Generate one random draw of the year effect
+yeartab<-data.frame(year=1:nyear,
+  a=exp(rgamma(nyear,parvals$s[1],parvals$r[1])),
+  b=rgamma(nyear,parvals$s[2],parvals$r[2]),
+  m=rgamma(nyear,parvals$s[3],parvals$r[3]),
+  k=rgamma(nyear,parvals$s[4],parvals$r[4]))
+yeartab
+
+#The Gompertz function 
+gompertz=function(alpha,beta,m,j) {
+  alpha/beta*exp((m-j)/beta)*exp(-exp((m-j)/beta))
+}
+#Generate simulated mean run for 50 days in each of 10 years
+simdat<-expand.grid(day=1:50,year=1:nyear)
+simdat$meanval<-gompertz(yeartab$a[simdat$year],yeartab$b[simdat$year],
+  yeartab$m[simdat$year],simdat$day)
+ggplot(simdat,aes(x=day,y=meanval,color=factor(year),group=year))+geom_line(lwd=1.4)
+
+#Calculate the parameters and draw random neg bin "true" numbers per day per year
+simdat$v<-rgamma(nrow(simdat),yeartab$k[simdat$year],yeartab$k[simdat$year])
+simdat$lambda<-simdat$mean*simdat$v
+simdat$TrueNum<-rpois(nrow(simdat),simdat$lambda)
+
+#Randomly sample sampling fractions in each day of 0,1, or some intermediate number
+simdat$Fraction<-sample(c(1,1,1,1,1,1,1,1,1,1,1,1,0,0.2,0.2,0.1,1,1,0,1,1,0),nrow(simdat),replace=TRUE)
+#Actual count is 
+simdat$Count<-trunc(simdat$Fraction*simdat$TrueNum)
+simdat$Y<-ifelse(simdat$Fraction==1,simdat$Count,NA)
+simdat$Ypartial<-ifelse(simdat$Fraction==1,0,simdat$Count)
+summary(simdat)
+
+#Model as written by Jasper et al
+write("model{
+ for(t in 1:T){ # T = Number Years
+  for(j in 1:J){ # J = Number Days
+    Ycensored[t, j] ~ dinterval(Y[t, j], PartialY[t, j])
+    Y[t, j] ~ dpois(lambda[t, j])           #  Rewriting the 
+    lambda[t, j] <- mu[t, j] * v[t, j]      #  Negative-binomial as 
+    v[t, j] ~ dgamma(kappa[t], kappa[t])    #  a gamma-Poisson mixture  
+    log(mu[t, j]) <- lnalpha[t] - log(beta[t]) +  (m[t] - j) / beta[t] - exp((m[t] - j) / beta[t]) 
+  }#j
+  lnalpha[t] ~ dgamma(alphaa, alphab)
+  kappa[t] ~ dgamma(kappaa, kappab)
+  m[t] ~ dgamma(ma, mb)
+  beta[t] ~ dgamma(betaa, betab)
+  esc[t] <- sum(Y[t, 1:J])
+}#t
+alphaa<- alphamu * alphamu / alphasig2
+alphab<- alphamu / alphasig2
+alphamu ~ dexp(0.0001)
+alphasig2 ~ dexp(0.0001)
+kappaa<- kappamu * kappamu / kappasig2
+kappab<- kappamu / kappasig2
+kappamu ~ dexp(0.0001)
+kappasig2 ~ dexp(0.0001)
+ma <- mmu * mmu / msig2
+mb<- mmu / msig2
+mmu ~ dexp(0.0001)
+msig2 ~ dexp(0.0001)
+betaa<- betamu * betamu / betasig2
+betab<- betamu / betasig2
+betamu ~ dexp(0.0001)
+betasig2 ~ dexp(0.0001)
+}
+",file=here("JAGS_mods","salmon.txt"))
+
+#Simulated data
+salmondat<-list(T=nyear,J=50,Y=matrix(simdat$Y,nyear,50,byrow=TRUE),
+  PartialY=matrix(simdat$Ypartial,nyear,50,byrow=TRUE))
+
+#Initial values needed for gamma distributed parameters
+salmoninit<-list(alphamu=parvals$mean[1],alphasig2=parvals$var[2],
+  betamu=parvals$mean[2],betasig2=parvals$var[2],
+  mmu=parvals$mean[3],msig2=parvals$var[3],
+  kappamu=parvals$mean[4],kappasig2=parvals$var[4])
+
+#Run JAGS
+salmonjags<-jags(salmondat,parameters.to.save=c("esc","Y"),
+  inits=list(salmoninit,salmoninit),
+  model.file = here("JAGS_mods","salmon.txt"),
+  n.chains = 2,n.iter=110000,n.thin=10,n.burnin = 10000)
+
+summary(salmonjags$BUGSoutput$summary)
+
+#Calculate "true" total escapement and compare to estimate
+salmonYear<-simdat %>% group_by(year) %>% 
+ summarize(TrueCount=sum(TrueNum)) %>%
+  ungroup()
+salmonYear<-cbind(salmonYear,salmonjags$BUGSoutput$summary[paste0("esc[",1:nyear,"]"),c("2.5%","mean","97.5%")])
+ggplot(salmonYear,aes(x=year))+
+  geom_point(aes(y=TrueCount))+
+  geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=`2.5%`,ymax=`97.5%`),alpha=0.2)
+
+#Look at some missing estimates
+partialdays<-which(simdat$Fraction<1 & simdat$year==1)
+yvals<-data.frame(salmonjags$BUGSoutput$summary[paste0("Y[1,",partialdays,"]"),c("2.5%","mean","97.5%")])
+yvals$PartialY<-simdat$Ypartial[partialdays]
+yvals$Day<-partialdays
+
+ggplot(yvals,aes(x=Day,y=mean))+geom_point()+
+  geom_errorbar(aes(ymin=X2.5.,ymax=X97.5.),linewidth=1)+
+  geom_point(aes(y=PartialY),color="red")+ylab("Estimated count")
+
+### Missing data due to size limit for fish in growth estimation
+yellowtail<-read.csv(here("data","yellowtail.csv"))
+yellowtail$LegalSize<-ifelse(yellowtail$ObsL>575,"Yes","No")
+ggplot(yellowtail, aes(x=Age,y=ObsL,color=LegalSize))+
+  geom_point()+xlab("Age")+ylab("Length")
+
+write("model {
+	for (i in 1:N){ 
+		PredL[i] <- Linf * (1 - exp(- K* (Age[i] -Age0))) 	# model prediction  
+		ObsL[i] ~ dnorm(PredL[i], tau)T(575,)  	# truncated normal likelihood
+}
+ #priors specification
+  K ~ dunif(0,2)
+  Age0~ dunif(-15,0)
+  Linf ~ dunif(10,2000) 	
+  tau~dgamma(0.001,0.001)
+}
+",file=here("JAGS_mods","VonBertTruncnorm.txt"))
+
+fishdat<-c(as.list(filter(yellowtail,LegalSize=="Yes")),N=length(which(yellowtail$LegalSize=="Yes")))
+summary(fishdat)
+truncfish<-jags(fishdat,
+  model.file=here("JAGS_mods","VonBertTruncnorm.txt"),
+  parameters.to.save=c("Linf","K","PredL"),
+  n.chain=2,n.iter=110000,n.burnin = 10000,n.thin=2
+  )
+meanrows<-paste0("PredL[",1:fishdat$N,"]")
+yellowtail$Predicted[yellowtail$LegalSize=="Yes"]<-truncfish$BUGSoutput$summary[meanrows,"mean"]
+ggplot(yellowtail, aes(x=Age,y=ObsL,color=LegalSize))+
+  geom_point()+xlab("Age")+ylab("Length")+
+  geom_line(aes(y=Predicted))
+```
+
+## Missing X data in linear regression. Estimated as free parameter
+
+```{r}
+lr<-read.csv(here("data","lr.csv"))
+lr$numrock[1:5]<-NA
+
+write("model
+{
+  a ~ dnorm(0, 1.0E-6)  # the intercept term
+  for (i in 1:6)  # the 6 regression coefficients
+  {
+    b[i] ~ dnorm(0, 1.0E-6)  # uninformative priors
+  }
+
+  mnr <- 1.178125  # means of the explanatory variables
+  mv <- mean(volcanic[])
+  mrc <- mean(rockcell[])
+  msl <- mean(nearslope[])
+  mso <- mean(nearsouth[])
+  lambda~dlnorm(0,1.0E-6)
+  for (i in 1:325)  # for each of the sites
+  {
+    logit(p[i]) <- a + b[1]*(numrock[i]-mnr) + b[2]*(volcanic[i]-mv) + b[3]*(rockcell[i]-mrc) + b[4]*(nearslope[i]-msl) + b[5]*(nearslope[i]-msl)*(nearslope[i]-msl) + b[6]*(nearsouth[i]-mso)
+    lr[i] ~ dbern(p[i])  # observed occurrence drawn from a Bernoulli dist'n
+    numrock[i]~dpois(lambda)
+ }
+}
+",file=here("JAGS_mods","missingFree.txt"))
+
+init1<-list(list(lambda=2),list(lambda=1))
+resfree<-jags(lr,init1,parameters.to.save = c("lambda","a","b","numrock"),
+  model.file = here("JAGS_mods","missingFree.txt"),n.chains=2,n.iter = 110000,n.burnin = 10000,n.thin=5)
+res1<-resfree$BUGSoutput
+round(res1$summary[1:14,],2)
+
+#Missing x data in linear regression. Estimated as function of other variables
+write("model
+{
+  a ~ dnorm(0, 1.0E-6)  # the intercept term
+  for (i in 1:6)  # the 6 regression coefficients
+  {
+    b[i] ~ dnorm(0, 1.0E-6)  # uninformative priors
+  }
+  mnr <- 1.178125  # means of the explanatory variables
+  mv <- mean(volcanic[])
+  mrc <- mean(rockcell[])
+  msl <- mean(nearslope[])
+  mso <- mean(nearsouth[])
+  for(i in 1:5) { imp[i]~dnorm(0,1.0E-4) }
+  for (i in 1:325)  # for each of the sites
+  {
+    logit(p[i]) <- a + b[1]*(numrock[i]-mnr) + b[2]*(volcanic[i]-mv) + b[3]*(rockcell[i]-mrc) + b[4]*(nearslope[i]-msl) + b[5]*(nearslope[i]-msl)*(nearslope[i]-msl) + b[6]*(nearsouth[i]-mso)
+    lr[i] ~ dbern(p[i])  # observed occurrence drawn from a Bernoulli dist'n
+    numrock[i]~dpois(lambda[i])
+    log(lambda[i])<-imp[1]+imp[2]*(volcanic[i]-mv)+imp[3]*(rockcell[i]-mrc)+imp[4]*(nearslope[i]-msl)+imp[5]*(nearsouth[i]-mso)
+ }
+}",file=here("JAGS_mods","missingModeled.txt"))
+
+init1<-list(list(imp=c(1,0,0,0,0)),list(imp=c(2,0,0,0,0)))
+resMod<-jags(lr,init1,parameters.to.save = c("lambda","a","b","numrock","imp"),
+  model.file = here("JAGS_mods","missingModeled.txt"),n.chains=2,n.iter = 110000,n.burnin = 10000,n.thin=5)
+round(resMod$BUGSoutput$summary[1:30,],2)
+```
+
