@@ -112,7 +112,7 @@ arabidopsis.data |>
 
 ```
 
-  I think the random effects are needed, and it appears that there is a difference between the nutrients abut it is harder to tell if the clipped vs unclipped will be different.  
+  I think the random effects are needed, and it appears that there is a difference between the nutrients but it is harder to tell if the clipped vs unclipped will be different.  
 
 #### B) Use INLA to run four different likelihood models, each with the same model formula described above, and show the summary statistics. Note that you will change nothing expect the family to do this part. The likelihood models are: 1) Poisson, 2) Negative Binomial, 3) Zero inflated Poisson, and 4) Normal(gaussian).  
 
@@ -205,7 +205,8 @@ WAIC.table <- tibble(model = c("Poisson", "Negative Bionomial",
 WAIC.table  |> knitr::kable(caption = "WAIC Table")
 
 ```
-
+  
+  The best model was the negative binomial, indicating that the mean is different from the standard deviation. The zero inflated poisson was not the best model which indicates that there are NOT extra zeros.  
 
 #### D) Plot the PIT and CPO residuals against the predicted values of the data points for the WAIC best model. Does the model seem to fit adequately according to the PIT?  
 
@@ -241,6 +242,8 @@ fruit.residuals |>
 
 ```
 
+  The model appears to fit adequately from the PIT.  
+
 
 ##Problem 2) Posterior predictive checks and rstanarm  
 
@@ -273,7 +276,7 @@ rstanarm_summary <- rownames_to_column(as.data.frame(fruit.negbinom.rstanarm$sta
 rstanarm_summary
 
 ```
-
+  The coefficient are similar to the INLA results.  
 
 #### B) Make a plot of the INLA mean predicted value against the rstan arm mean predictions, being sure you have them both in the original (not log) scale.  
 
@@ -321,7 +324,7 @@ fruit.bf
 plot(fruit.bf)
 
 ```
-
+  The additive effects of both nutrient and amd produced the best model.
 
 #### C) Calculate the odds for the best model vs. the 2nd best model. How much better is the best one?  
 
@@ -334,7 +337,7 @@ plot(fruit.bf[3]/fruit.bf[1])
 
 
 ```
-
+  The top model is 3.75% better then the second best model (nutrient effect only). Which isn't all that much different.  
 
 
 
