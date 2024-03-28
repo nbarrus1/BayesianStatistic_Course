@@ -1,0 +1,34 @@
+model{
+  for (i in 1:N)
+  {
+    # number of years in which there were resightings
+    resightings[i] <- sum(Y[i, First[i]:Last[i]])-1  
+
+    # likelihood up to last resighting
+    L1[i] <- pow(surv, Last[i]-First[i]) * pow(resight, resightings[i]) * pow(1-resight, Last[i]-First[i]-resightings[i])   
+
+    # L2a's are for the likelihoods for contingency of death in each year since last resighting
+    L2a[i, Last[i]] <- 0  # this term is necessary in case Last[i]=Years
+
+    for (j in Last[i]+1: Years)
+    {
+      L2a[i,j] <- pow(surv*(1-resight), j-Last[i]-1)
+    }
+
+    # L2b's are the likelihoods for survival since last resighting
+    L2b[i] <- pow(surv*(1-resight), Years-Last[i])
+
+    # L's are the overall likelihood - prob of surv up to last sighting times the sum of all possible contingencies (death or survival over the next years)
+    L[i] <- L1[i] * ((1-surv)*sum(L2a[i,  Last[i]:Years]) + L2b[i])
+
+    # uses a dummy variable of ones as the data, the ones trick,  see WinBUGS manual
+    phi[i] <- pow(L[i], n[i])  # likelihood for n[i] individuals with this sighting history
+    Dummy[i] ~ dbern(phi[i])
+  }
+
+# Priors 
+  surv ~ dunif(0, 1)  # annual survival - uninformative
+#  surv ~ dnorm (0.57, 178)  # informative prior for survival
+
+  resight ~ dunif(0, 1)  # resighting rate - uninformative
+}

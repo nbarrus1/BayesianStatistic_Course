@@ -1,0 +1,7 @@
+model {
+ R~dbin(p,C)  #Likelihood of the number of recaps
+ p~dbeta(1,1)  # prior for the estimated parameter p
+ N<-M/p        # derived parameter, the total population
+ Prob1000<-step(N-1000)    # Probability population>1000
+}
+

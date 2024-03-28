@@ -1,10 +1,8 @@
 model 
   {
 		for (i in 1:N){ 
-		  z[i] ~ dunif(1,10)
-		  Age[i] ~ dnorm(z[i],age_tau)
 			# model prediction  
-			PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (z[i] -Age1)))/(1 - exp(- K* (Age2 -Age1))) 	
+			PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K* (Age2 -Age1))) 	
 			logPredL[i] <- log(PredL[i])  	# log-transformation of pred.value
 			ObsL[i] ~ dlnorm(logPredL[i], tau)  	# lognormal likelihood
 			logObsL[i] <-log(ObsL[i]) 	     # log transfomration of observed value
@@ -23,7 +21,6 @@ model
      L2~dunif(10,800) 	
      tau~dgamma(0.001,0.001)
   #Derived parameters
-    age_tau <- 1/(0.5)^2
     Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
     chi.square.obs<-sum(sresid2[])
     chi.square.rep<-sum(rep.sresid2[])

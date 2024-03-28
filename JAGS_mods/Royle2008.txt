@@ -1,0 +1,33 @@
+model {
+for(j in 1:(nyear-2)){
+ p[j]~dunif(0,1)
+ lp[j]<-log(p[j]/(1-p[j])) 
+ phi[j]~dunif(0,1)
+ lphi[j]<-log(phi[j]/(1-phi[j]))
+}
+p[nyear-1]~dunif(0,1)
+lp[nyear-1]<-log(p[nyear-1]/(1-p[nyear-1]))
+lphi[nyear-1]<-0
+sigma.phi~dunif(0,10)
+sigma.p~dunif(0,10)
+tauphi<-1/(sigma.phi*sigma.phi)
+taup<-1/(sigma.p*sigma.p)
+for(i in 1:nind){
+ eta[i]~dnorm(0,taup) 
+ delta[i]~dnorm(0,tauphi)
+ for(t in 1:(nyear-1)){
+ logit(P[i,t])<- lp[t] + eta[i]
+ logit(PHI[i,t])<- lphi[t] + delta[i]
+}
+}
+for(i in 1:nind){
+ z[i,first[i]]~dbern(1)
+ for(j in (first[i]+1):nyear){
+  mu2[i,j]<-PHI[i,j-1]*z[i,j-1]
+  z[i,j]~dbern(mu2[i,j])
+  mu1[i,j]<-P[i,j-1]*z[i,j]
+  y[i,j]~dbern(mu1[i,j])
+}
+}
+}
+

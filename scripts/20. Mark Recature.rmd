@@ -1,0 +1,511 @@
+---
+title: "20. Mark recapture"
+author: "Beth Babcock"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(here)
+theme_set(theme_bw())
+```
+
+# Penguin example. Simple Peterson method
+
+```{r}
+penguin<-list(M=141, R=80, C=683)
+write("model {
+ R~dbin(p,C)  #Likelihood of the number of recaps
+ p~dbeta(1,1)  # prior for the estimated parameter p
+ N<-M/p        # derived parameter, the total population
+ Prob1000<-step(N-1000)    # Probability population>1000
+}
+",file=here("JAGS_mods","penguin.txt"))
+
+penguinres<-jags(penguin,
+                 parameters.to.save = c("Prob1000","p","N"),
+                 model.file = here("JAGS_mods","penguin.txt"),
+                 n.chains = 2,n.burnin = 10000,n.iter = 110000,n.thin=4)
+round(penguinres$BUGSoutput$summary,2)
+penguingg<-ggs(as.mcmc(penguinres))
+ggs_density(filter(penguingg,Parameter=="N"))
+```
+
+## Dipper example. Box 7.1
+
+```{r}
+write("model
+{
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+#  palive = prob of remaining alive (=0 if previously dead, =surv if alive)
+      palive[i,j] <- surv * alive[i, j-1] 
+# determine whether it is alive
+      alive[i,j] ~ dbern(palive[i,j])
+# probability of resighting depends on whether it is alive
+      psight[i,j] <- resight * alive[i, j]        
+# actual resighting determined randomly
+      Y[i, j] ~ dbern(psight[i,j])
+     }
+   }
+ # Uninformative priors for survival and resighting rates
+  surv ~ dunif(0, 1)  # uninformative
+  resight ~ dunif(0,1)  # resighting rate - uninformative
+}",file=here("JAGS_mods","dipper7.1.txt"))
+
+dipper<-matrix(c(
+  1, 1, 1, 1, 0, 0, 0,
+  1, 1, 0, 1, 1, 1, 0,
+  1, 1, 0, 0, 0, 0, 0,
+  1, 1, 0, 0, 0, 0, 0,
+  1, 0, 1, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  0, 1, 1, 1, 1, 1, 1,
+  0, 1, 1, 1, 1, 1, 1,
+  0, 1, 1, 1, 1, 1, 0,
+  0, 1, 1, 1, 1, 0, 0,
+  0, 1, 1, 1, 1, 0, 0,
+  0, 1, 1, 1, 0, 0, 0,
+  0, 1, 1, 0, 1, 1, 0,
+  0, 1, 1, 0, 0, 0, 0,
+  0, 1, 1, 0, 0, 0, 0,
+  0, 1, 1, 0, 0, 0, 0,
+  0, 1, 1, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 0, 1, 1, 1, 1, 1,
+  0, 0, 1, 1, 1, 1, 1,
+  0, 0, 1, 1, 1, 1, 0,
+  0, 0, 1, 1, 1, 0, 0,
+  0, 0, 1, 1, 1, 0, 0,
+  0, 0, 1, 1, 0, 0, 0,
+  0, 0, 1, 1, 0, 0, 0,
+  0, 0, 1, 1, 0, 0, 0,
+  0, 0, 1, 1, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 0, 1, 1, 1, 1,
+  0, 0, 0, 1, 1, 1, 1,
+  0, 0, 0, 1, 1, 1, 0,
+  0, 0, 0, 1, 1, 1, 0,
+  0, 0, 0, 1, 1, 1, 0,
+  0, 0, 0, 1, 1, 1, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 0, 1, 1,
+  0, 0, 0, 1, 0, 0, 1,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0
+), 130,7,byrow=TRUE)
+datDipper<-list(Y=dipper,Years=7, N=130,            
+            First=c(1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6))
+#To initialize Alive
+#Must have NA for times before animal was observed which are undefined in the model
+alive<-matrix(1,datDipper$N,datDipper$Years)
+for(i in 1:datDipper$Years)
+ alive[,i][i<=datDipper$First]=NA
+
+alive[1:10,]  #To check it worked
+
+init1<-list(surv=0.5,resight=0.5,alive=alive)
+init2<-list(surv=0.8,resight=0.8,alive=alive)
+
+resDipper<-jags(datDipper,list(init1,init2),
+                parameters.to.save=c("surv","resight"),
+                model.file=here("JAGS_mods","dipper7.1.txt"),
+                n.chains=2,n.iter=200000,n.burnin=10000,n.thin=10)
+
+round(resDipper$BUGSoutput$summary[c("surv","resight"),],2)
+resDipper$BUGSoutput$DIC
+dipper1ggs<-ggs(as.mcmc(resDipper))
+dipper1ggs<-dipper1ggs[dipper1ggs$Parameter %in% c("surv","resight"),]
+ggs_density(dipper1ggs)
+```
+
+Ones trick Poisson
+
+```{r}
+write("model {
+  for (i in 1:10)  # by data point
+  {#Poisson likelihood of the data (y[i])
+    p[i] <- exp(-m + y[i]*log(m) - logfact(y[i]))     
+    Dummy[i] ~ dbern(p[i])  # Bernoulli outcome
+  }
+  # uniniformative prior for m
+  m ~ dlnorm(0.0, 1.0E-6)
+}",file=here("JAGS_mods","PoissonOnes.txt"))
+
+datPoisson<-list(y=c(6,0,1,2,1,7,1,5,2,0), Dummy=rep(1,10))
+init1<-list(list(m=4),list(m=3))
+PoissonOne<-jags(datPoisson,init1,parameters.to.save = c("m"),model.file = here("JAGS_mods","PoissonOnes.txt"),
+                n.chains = 2,n.burnin = 10000,n.iter = 510000,n.thin=10)
+
+write("model {
+ for(i in 1:10) {
+   y[i]~dpois(m)
+  }
+ m ~ dlnorm(0.0, 1.0E-6) 
+}
+",file=here("JAGS_mods","PoissonRegular.txt"))
+datPoisson<-list(y=c(6,0,1,2,1,7,1,5,2,0))
+PoissonRegular<-jags(datPoisson,init1,parameters.to.save = c("m"),model.file = here("JAGS_mods","PoissonRegular.txt"),
+                 n.chains = 2,n.burnin = 10000,n.iter = 510000,n.thin=10)
+
+PoissonOne$BUGSoutput$summary
+PoissonRegular$BUGSoutput$summary
+PoissonOne$BUGSoutput$DIC
+PoissonRegular$BUGSoutput$DIC
+```
+
+
+Box 7.3. Dipper ones trick multinomial
+
+```{r}
+write("model{
+  for (i in 1:N)
+  {
+    # number of years in which there were resightings
+    resightings[i] <- sum(Y[i, First[i]:Last[i]])-1  
+
+    # likelihood up to last resighting
+    L1[i] <- pow(surv, Last[i]-First[i]) * pow(resight, resightings[i]) * pow(1-resight, Last[i]-First[i]-resightings[i])   
+
+    # L2a's are for the likelihoods for contingency of death in each year since last resighting
+    L2a[i, Last[i]] <- 0  # this term is necessary in case Last[i]=Years
+
+    for (j in Last[i]+1: Years)
+    {
+      L2a[i,j] <- pow(surv*(1-resight), j-Last[i]-1)
+    }
+
+    # L2b's are the likelihoods for survival since last resighting
+    L2b[i] <- pow(surv*(1-resight), Years-Last[i])
+
+    # L's are the overall likelihood - prob of surv up to last sighting times the sum of all possible contingencies (death or survival over the next years)
+    L[i] <- L1[i] * ((1-surv)*sum(L2a[i,  Last[i]:Years]) + L2b[i])
+
+    # uses a dummy variable of ones as the data, the ones trick,  see WinBUGS manual
+    phi[i] <- pow(L[i], n[i])  # likelihood for n[i] individuals with this sighting history
+    Dummy[i] ~ dbern(phi[i])
+  }
+
+# Priors 
+  surv ~ dunif(0, 1)  # annual survival - uninformative
+#  surv ~ dnorm (0.57, 178)  # informative prior for survival
+
+  resight ~ dunif(0, 1)  # resighting rate - uninformative
+}",file=here("JAGS_mods","dipperOnes.txt"))
+
+dipper2<-matrix(c(
+  1, 1, 1, 1, 0, 0, 0,
+  1, 1, 0, 1, 1, 1, 0,
+  1, 1, 0, 0, 0, 0, 0,
+  1, 0, 1, 0, 0, 0, 0,
+  1, 0, 0, 0, 0, 0, 0,
+  0, 1, 1, 1, 1, 1, 1,
+  0, 1, 1, 1, 1, 1, 0,
+  0, 1, 1, 1, 1, 0, 0,
+  0, 1, 1, 1, 0, 0, 0,
+  0, 1, 1, 0, 1, 1, 0,
+  0, 1, 1, 0, 0, 0, 0,
+  0, 1, 0, 0, 0, 0, 0,
+  0, 0, 1, 1, 1, 1, 1,
+  0, 0, 1, 1, 1, 1, 0,
+  0, 0, 1, 1, 1, 0, 0,
+  0, 0, 1, 1, 0, 0, 0,
+  0, 0, 1, 0, 0, 0, 0,
+  0, 0, 0, 1, 1, 1, 1,
+  0, 0, 0, 1, 1, 1, 0,
+  0, 0, 0, 1, 1, 0, 0,
+  0, 0, 0, 1, 0, 1, 1,
+  0, 0, 0, 1, 0, 0, 1,
+  0, 0, 0, 1, 0, 0, 0,
+  0, 0, 0, 0, 1, 1, 1,
+  0, 0, 0, 0, 1, 1, 0,
+  0, 0, 0, 0, 1, 0, 0,
+  0, 0, 0, 0, 0, 1, 1,
+  0, 0, 0, 0, 0, 1, 0
+),28, 7,byrow=TRUE)
+datDipperOnes<-list(Years=7, N=28,
+                    n=c(1, 1, 2, 1, 4, 2, 1, 2, 1, 1, 4, 18, 2, 1, 2, 4, 18, 2, 4, 5, 1, 1, 10, 6, 6, 7, 11, 12),
+                    Y=dipper2, 
+                    First=c(1,1,1,1,1,2,2,2,2,2,2,2,3,3,3,3,3,4,4,4,4,4,4,5,5,5,6,6),
+                    Last=c(4, 6, 2, 3, 1, 7, 6, 5, 4, 6, 3, 2, 7, 6, 5, 4, 3, 7, 6, 5, 7, 7, 4, 7, 6, 5, 7, 6),
+                    Dummy=rep(1,28)
+)
+init1=list(surv=0.5,resight=0.5)
+init2=list(surv=0.8,resight=0.8)
+resDipperOnes=jags(datDipperOnes,list(init1,init2),parameters.to.save=c("surv","resight"),
+               model.file=here("JAGS_mods","dipperOnes.txt"),n.chains=2,n.iter=200000,n.burnin=10000,n.thin=10)
+
+round(resDipperOnes$BUGSoutput$summary,2)
+round(resDipper$BUGSoutput$summary[c("resight","surv"),],2)
+resDipperOnes$BUGSoutput$DIC
+resDipper$BUGSoutput$DIC
+```
+
+Royle 2008 Dipper example with time varying parameters
+
+```{r}
+write("model {
+for(j in 1:(nyear-2)){
+ p[j]~dunif(0,1)
+ lp[j]<-log(p[j]/(1-p[j])) 
+ phi[j]~dunif(0,1)
+ lphi[j]<-log(phi[j]/(1-phi[j]))
+}
+p[nyear-1]~dunif(0,1)
+lp[nyear-1]<-log(p[nyear-1]/(1-p[nyear-1]))
+lphi[nyear-1]<-0
+sigma.phi~dunif(0,10)
+sigma.p~dunif(0,10)
+tauphi<-1/(sigma.phi*sigma.phi)
+taup<-1/(sigma.p*sigma.p)
+for(i in 1:nind){
+ eta[i]~dnorm(0,taup) 
+ delta[i]~dnorm(0,tauphi)
+ for(t in 1:(nyear-1)){
+ logit(P[i,t])<- lp[t] + eta[i]
+ logit(PHI[i,t])<- lphi[t] + delta[i]
+}
+}
+for(i in 1:nind){
+ z[i,first[i]]~dbern(1)
+ for(j in (first[i]+1):nyear){
+  mu2[i,j]<-PHI[i,j-1]*z[i,j-1]
+  z[i,j]~dbern(mu2[i,j])
+  mu1[i,j]<-P[i,j-1]*z[i,j]
+  y[i,j]~dbern(mu1[i,j])
+}
+}
+}
+",file=here("JAGS_mods","Royle2008.txt"))
+
+
+y= matrix(c(1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 
+            1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,     NA, 1, 1, 1, 1, 0, 0,     NA, 1, 1, 1, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0,
+            0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0,
+            0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0,
+            0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA,     NA, 1, 1, 1, 1, 0,     NA,     NA, 1, 1, 1, 0, 0,     NA,     NA, 1, 1, 1, 0, 0,     NA,     NA, 1, 1, 1, 0, 0,  
+            NA,     NA, 1, 1, 1, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0, 
+            NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 0, 1, 1, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0, 
+            NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     
+            NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 
+            1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 0,     NA,     NA,     NA, 1, 1, 
+            1, 0,     NA,     NA,     NA, 1, 1, 1, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA
+            ,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,    
+            NA, 1, 0, 0, 1,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 
+            1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA, 
+            NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1, 
+            NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA, 
+            NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA, 
+            NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 
+            1, 0, 0,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 
+            1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 
+            1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,
+            NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0, 
+            NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0, 
+            NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA,     NA,
+            1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,    
+            NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,
+            NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,
+            NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,    
+            NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0,
+            0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,     NA, 1, 1, 1, 1, 1, 1,     NA, 1, 1, 1, 1, 1, 1,     NA, 1, 1, 1, 1, 1, 
+            0,     NA, 1, 1, 1, 1, 0, 0,     NA, 1, 1, 1, 1, 0, 0,     NA, 1, 1, 1, 0, 0, 0,     NA, 1, 1, 0, 1, 1, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,     NA, 1, 1, 0, 0, 0, 0,
+            NA, 1, 1, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,    
+            NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     
+            NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA, 1, 0, 0, 0, 0, 0,     NA,     NA, 1, 1, 1, 1, 1,     NA,     NA, 1, 1, 1, 1, 
+            1,     NA,     NA, 1, 1, 1, 1, 0,     NA,     NA, 1, 1, 1, 0, 0,     NA,     NA, 1, 1, 1, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 1, 0, 0,
+            0,     NA,     NA, 1, 1, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0,
+            0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0,
+            0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA, 1, 0, 0, 0,
+            0,     NA,     NA, 1, 0, 0, 0, 0,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 1,     NA,     NA,     NA, 1, 1, 1, 0,     NA,     NA,     NA, 1, 1, 1, 0,     NA,
+            NA,     NA, 1, 1, 1, 0,     NA,     NA,     NA, 1, 1, 1, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     
+            NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 1, 0, 0,     NA,     NA,     NA, 1, 0, 1, 1,     NA,     NA,     NA, 1, 0, 0, 1,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,    
+            NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 
+            0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA, 1, 0, 0, 0,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     
+            NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,     NA,     NA,     NA, 1, 1, 1,     NA,  
+            NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA,
+            1, 1, 0,     NA,     NA,     NA,     NA, 1, 1, 0,     NA,     NA,     NA,     NA, 1, 0, 0, 
+            NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,    
+            NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA, 1, 0, 0,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA, 
+            NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,    
+            NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA, 1, 1,     NA,     NA,     NA,     NA,     NA,
+            1, 1,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0, 
+            NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1,
+            0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0, 
+            NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA, 1, 0,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     
+            NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,    
+            NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA, 
+            NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,    
+            NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,    
+            NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA, 
+            NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     NA, 1,     NA,     NA,     NA,     NA,     NA,     
+            NA, 1), 294, 7,byrow=TRUE)
+                        
+                        
+RoyleDat<-list(y=y,first=c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7), nind=294, nyear=7)
+
+z<-matrix(1,294,7)
+for(i in 1:294) {
+  z[i,1:RoyleDat$first[i]]<-NA
+}
+init1<-list(sigma.p=1,sigma.phi=1,p=c(0.5,0.5,0.5,0.5,0.5,0.5),
+            phi=c(0.5,0.5,0.5,0.5,0.5),z=z)
+init2<-list(sigma.p=.5,sigma.phi=.5,p=c(0.25,0.25,0.25,0.25,0.25,0.25),
+            phi=c(0.25,0.25,0.25,0.25,0.25),z=z)
+
+RoyleRes<-jags(RoyleDat,list(init1,init2),
+               parameters.to.save = c("p","phi","sigma.p","sigma.phi"),
+               model.file = here("JAGS_mods","Royle2008.txt"),
+               n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+round(RoyleRes$BUGSoutput$summary,2)
+```
+
+## Vole example to estimate total population size. 
+
+```{r}
+write("model {
+		# prior distributions
+		psi ~ dunif(0, 1)
+		p ~ dunif(0,1)
+		# zero-inflated binomial model for the augmented data
+		for(i in 1 : (nind + nz)){
+			z[i] ~ dbern(psi)
+			mu[i] <- z[i ]* p
+			y[i] ~ dbin(mu[i], J)
+		}
+		# N is a derived parameter under data augmentation
+		N<-sum(z[])
+	}
+",file=here("JAGS_mods","Vole1.txt"))
+voleDat<-list(y=c(2, 3, 4, 5, 1, 3, 5, 5, 4, 2, 5, 3, 5, 4, 4, 3, 5, 1, 2, 3, 
+                       2, 4, 5, 5, 1, 1, 2, 4, 4, 5, 4, 1, 3, 1, 1, 2, 5, 5, 4, 1, 5, 
+                       4, 1, 4, 3, 5, 4, 1, 3, 1, 1, 2, 5, 3, 5, 2, 0, 0, 0, 0, 0, 0, 
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                   nind = 56,
+                   nz = 60,
+                   J = 5)
+init1<-list(list(psi=0.5,p=0.5,z=rep(1,56+60)),list(psi=0.6,p=0.6,z=rep(1,56+60)))
+voleres<-jags(voleDat,init1,parameters.to.save = c("psi","p","z","N"),
+              model.file=here("JAGS_mods","Vole1.txt"),
+              n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=5)
+round(voleres$BUGSoutput$summary[1:5,],2)
+ggsVole<-ggs(as.mcmc(voleres))
+ggs_density(filter(ggsVole,Parameter=="p"))
+ggs_density(filter(ggsVole,Parameter=="psi"))
+ggsN<-filter(ggsVole,Parameter=="N")
+ggplot(ggsN,aes(x=value))+geom_histogram()+xlab("Population size (N)")
+
+voleDat2<-voleDat
+voleDat2$nz<-voleDat$nz<-10
+voleDat2$y<-voleDat2$y[1:66]
+init1<-list(list(psi=0.5,p=0.5,z=rep(1,56+10)),list(psi=0.6,p=0.6,z=rep(1,56+10)))
+
+voleRes2<-jags(voleDat2,init1,parameters.to.save = c("p","psi","N","z"),
+               model.file = here("JAGS_mods","Vole1.txt"),n.chains = 2,n.burnin = 10000,n.iter = 210000,n.thin=10)
+
+round(voleRes2$BUGSoutput$summary[1:5,],2)
+ggsVole<-ggs(as.mcmc(voleRes2))
+ggs_density(filter(ggsVole,Parameter=="p"))
+ggs_density(filter(ggsVole,Parameter=="psi"))
+ggsN<-filter(ggsVole,Parameter=="N")
+ggplot(ggsN,aes(x=value))+geom_histogram()+xlab("Population size (N)")
+```

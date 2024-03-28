@@ -1,0 +1,9 @@
+model {
+  for (i in 1:10)  # by data point
+  {#Poisson likelihood of the data (y[i])
+    p[i] <- exp(-m + y[i]*log(m) - logfact(y[i]))     
+    Dummy[i] ~ dbern(p[i])  # Bernoulli outcome
+  }
+  # uniniformative prior for m
+  m ~ dlnorm(0.0, 1.0E-6)
+}

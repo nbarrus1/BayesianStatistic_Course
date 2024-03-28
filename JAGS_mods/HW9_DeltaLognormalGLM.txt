@@ -1,0 +1,21 @@
+model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   present[i]~dbern(p[i])
+  }
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]] 
+   count[i]~dlnorm(logMean[i],tau)
+  }
+  for(i in 1:Nyear) {
+   mean.lnorm[i] <- exp(a2[i]+1/(2*tau))
+   logit(p.year[i])<-a[i]
+   total.mean[i] <-p.year[i]* mean.lnorm[i]
+  }
+}
+

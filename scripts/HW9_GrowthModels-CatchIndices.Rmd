@@ -83,7 +83,8 @@ head(croaker.data)
 
 #problem 2 data
 
-marlin.data <- read_csv(here("data","marlin.csv"))
+marlin.data <- read_csv(here("data","marlin.csv")) |> 
+  mutate(present = if_else(Count > 0, true = 1, false = 0))
 
 head(marlin.data)
 
@@ -102,10 +103,11 @@ croaker.data |>
 
 ```
 
+  It is not obvious whether the normal or lognormal will fit better. The error doesn't seem to increase with larger fish, so perhaps the normal is better.  
 
 #### B) Fit a von Bertalanffy growth model using the Schnute formulation: with lognormal error and with uninformative priors. Set Age1 equal to 1, and Age2 equal to 10.  Don’t use any random effects. Note that this is a large data set, so don’t save too many iterations (use a large thin) when you are saving residuals and predicted values.  
 
-```{r}
+```{r, results='hide'}
 write("model 
   {
 		for (i in 1:N){ 
@@ -189,7 +191,7 @@ ggplot(dfcheck,aes(sample=Residual))+
 
 *run the model*  
 
-```{r}
+```{r, results='hide'}
 write("model 
   {
 		for (i in 1:N){ 
@@ -233,7 +235,7 @@ HW9_SchnuteVBLG_norm_jags<-jags(croaker.list,list(init1,init2),
 
 ```
   
-*model summary*  
+  *model summary*  
 
 ```{r}
 parameters <- c("L1","L2","K","tau","Linf")
@@ -277,7 +279,7 @@ HW9_SchnuteVBLG_norm_jags$BUGSoutput$summary[c("dev","deviance"),]
 
 ```
 
-
+  *WAIC Table *  
 ```{r}
 
 n<-length(croaker.data$Age)
@@ -297,14 +299,14 @@ WAIC.table |> select(-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC Table")
 
 ```
 
-
+  Both the normal and lognormal are within 2 WAIC units so they both are adequate models. But, the normal model had the lowest WAIC.
 
 #### E) Now add ageing error to the lognormal model, assuming that the input age is normally distributed around the true age with a standard deviation of 0.5. Give the true ages a uniform prior between 1 and 10. Show the summary statistics.  How does this change the resulting estimates of Linf and K? (Note that you must use the estimated real age not the input age in the von Bertalanffy equation to predict length. Also, no need to calculate WAIC for this one).    
 
 
 *run model*  
 
-```{r}
+```{r, results='hide'}
 write("model 
   {
 		for (i in 1:N){ 
@@ -365,6 +367,8 @@ HW9_SchnuteVBLG_lnorm.zage_jags$BUGSoutput$summary[c("Linf","K"),]
 
 ```
 
+  When including error in age, the Linf decreased and K increased when compared to the model that did not include error in age.
+
 ## Problem 2) Delta lognormal  
 
 #### A) Apply a zero inflated Poisson model to the data. Use a logit link to estimate the probability of a positive observation as a function of the fixed effect of year and use a Bernoulli random variable (z) to estimate whether observations are positive or negative. Estimate the effect of year on the log of the mean count if positive as a fixed effect of year and use a Poisson likelihood for the counts. If you have trouble getting the model to run, try initializing the Bernoulli random variable for the positive catch (z in the example code) equal to 1 for all sets.  
@@ -374,7 +378,7 @@ HW9_SchnuteVBLG_lnorm.zage_jags$BUGSoutput$summary[c("Linf","K"),]
   
   *run the model*
 
-```{r}
+```{r, results='hide'}
 
 write("model  {
   for(j in 1:Nyear) {
@@ -396,17 +400,60 @@ write("model  {
 }
 ",file=here("JAGS_mods","HW9_ZIP.txt"))
 
-marlin.list <- list(N = length(marlin.data$Count),
-                    Year = marlin.data$Year,
+marlin.list <- list(N = length(marlin.data$present),
+                    N2 = length(marlin.data$Count),
+                    present = marlin.data$present,
+                    Year = marlin.data$Year-1994,  #need the integers of year so the index in the loop is correct
+                    Year2 = marlin.data$Year-1994, #need the integers of year so the index in the loop is correct
                     count = marlin.data$Count,
                     Nyear = length(unique(marlin.data$Year)))
 
-HW9_ZIP_jags <- jags(marlin.list, 
-                     parameters.to.save=c("predmean","predp","total.mean"), 
-              model.file=here("JAGS_mods","HW9_ZIP.txt"),
-              n.chains=2, n.iter=110000, 
-              n.burnin=10000,n.thin=2)
 
+init1 <- list(z = rep(1, times = nrow(marlin.data)))
+init2 <- list(z = rep(1, times = nrow(marlin.data)))
+
+HW9_ZIP_jags <- jags(marlin.list, inits = list(init1,init2),
+                     parameters.to.save=c("a","a2","predmean","predp","total.mean"), 
+              model.file=here("JAGS_mods","HW9_ZIP.txt"),
+              n.chains=2, n.iter=440000, 
+              n.burnin=40000,n.thin=8)
+
+
+```
+  
+  
+  *convergence, summary and plot*  
+```{r}
+
+#convergence 
+range(HW9_ZIP_jags$BUGSoutput$summary[,"n.eff"])
+range(HW9_ZIP_jags$BUGSoutput$summary[,"Rhat"])
+
+
+#summary
+
+HW9_ZIP_jags$BUGSoutput$summary
+
+#plot
+model.bugsoutput <- HW9_ZIP_jags$BUGSoutput
+Nyear= marlin.list$Nyear
+rows.p1<-paste0("predp[",1:Nyear,"]")
+rows.ln1<-paste0("predmean[",1:Nyear,"]")
+rows.tot1<-paste0("total.mean[",1:Nyear,"]")
+df1<-data.frame(model.bugsoutput$summary[rows.p1,c("2.5%","50%","97.5%")])
+df3<-data.frame(model.bugsoutput$summary[rows.ln1,c("2.5%","50%","97.5%")])
+df5<-data.frame(model.bugsoutput$summary[rows.tot1,c("2.5%","50%","97.5%")])
+resdf1<-bind_rows(list(Probability=df1,Positive=df3,Total=df5),.id = "Type")%>%
+  mutate(Type=factor(Type,levels=c("Probability","Positive","Total")))
+names(resdf1)[2:4]<-c(c("min","med","max"))
+resdf1$Year<-rep(sort(unique(marlin.data$Year)),3)
+
+#Plot
+ggplot(resdf1,aes(x=Year,y=med,ymin=min,ymax=max))+
+  geom_line(linewidth=1)+
+  geom_ribbon(alpha=0.3)+
+  facet_wrap(Type~.,scale="free")+
+  ylab("Index")
 
 ```
 
@@ -414,16 +461,95 @@ HW9_ZIP_jags <- jags(marlin.list,
 
 #### B) Fit an integrated (i.e. all in one chunk of JAGS or STAN code) delta-lognormal model to these data, with the same model structure, i.e a fixed effect of all five years in both the binomial and lognormal parts of the model. Show the summary statistics of the estimated parameters, making sure the model has converged. Plot the overall predicted mean count in each year from the model with credible intervals.  
 
+  *run the model*
+
+```{r, results='hide'}
+
+write("model  {
+  tau~dgamma(0.1,0.001)
+  for(i in 1:Nyear) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   a2[i]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   present[i]~dbern(p[i])
+  }
+  for(i in 1:N2)  {
+   logMean[i]<-a2[Year2[i]] 
+   count[i]~dlnorm(logMean[i],tau)
+  }
+  for(i in 1:Nyear) {
+   mean.lnorm[i] <- exp(a2[i]+1/(2*tau))
+   logit(p.year[i])<-a[i]
+   total.mean[i] <-p.year[i]* mean.lnorm[i]
+  }
+}
+",file=here("JAGS_mods","HW9_DeltaLognormalGLM.txt"))
 
 
-#### C) Which model do you think is better, a or b? Explain why you can’t compare them with information criteria. Did you get the same trend across years?  
+marlin.list <- list(N = length(marlin.data$present),
+                    N2 = length(marlin.data$Count[marlin.data$present == 1]), 
+                    present = marlin.data$present,
+                    Year = marlin.data$Year-1994,  #need the integers of year so the index in the loop is correct
+                    Year2 = marlin.data$Year[marlin.data$present == 1]-1994, #need the integers of year so the index in the loop is correct
+                    count = marlin.data$Count[marlin.data$present == 1],
+                    Nyear = length(unique(marlin.data$Year)))
+
+HW9_deltaLnorm_jags <-jags(marlin.list, 
+  parameters.to.save=c("a","a2","mean.lnorm","p.year",
+                       "total.mean"), 
+  model.file=here("JAGS_mods","HW9_DeltaLognormalGLM.txt"),
+  n.chains=2, n.iter=100000, n.burnin=5000,n.thin=2)
 
 
+```
+  
+  
+   *convergence, summary and plot*  
+```{r}
+
+#convergence 
+range(HW9_deltaLnorm_jags$BUGSoutput$summary[,"n.eff"])
+range(HW9_deltaLnorm_jags$BUGSoutput$summary[,"Rhat"])
+
+
+#summary
+
+HW9_deltaLnorm_jags$BUGSoutput$summary
+
+#plot
+model.bugsoutput <- HW9_deltaLnorm_jags$BUGSoutput
+Nyear= marlin.list$Nyear
+rows.p1<-paste0("p.year[",1:Nyear,"]")
+rows.ln1<-paste0("mean.lnorm[",1:Nyear,"]")
+rows.tot1<-paste0("total.mean[",1:Nyear,"]")
+df1<-data.frame(model.bugsoutput$summary[rows.p1,c("2.5%","50%","97.5%")])
+df3<-data.frame(model.bugsoutput$summary[rows.ln1,c("2.5%","50%","97.5%")])
+df5<-data.frame(model.bugsoutput$summary[rows.tot1,c("2.5%","50%","97.5%")])
+resdf1<-bind_rows(list(Probability=df1,Positive=df3,Total=df5),.id = "Type")%>%
+  mutate(Type=factor(Type,levels=c("Probability","Positive","Total")))
+names(resdf1)[2:4]<-c(c("min","med","max"))
+resdf1$Year<-rep(sort(unique(marlin.data$Year)),3)
+
+#Plot
+ggplot(resdf1,aes(x=Year,y=med,ymin=min,ymax=max))+
+  geom_line(linewidth=1)+
+  geom_ribbon(alpha=0.3)+
+  facet_wrap(Type~.,scale="free")+
+  ylab("Index")
+
+```
+
+
+#### C) Which model do you think is better, a or b? Explain why you can’t compare them with information criteria. Did you get the same trend across years?   
+
+It is hard to tell which model is better, they both converged, though it took many more iteration for the ZIP to converge, and they both gave similar results. We can't compare the models using information criteria because the delta log normal has multiple likelihoods where as the ZIP only has one likelihood. If I had to choose, then I'd choose the delta lognormal just because it converged quicker.  
 
 
 
 ```{r, eval=FALSE, include=FALSE}
-rmarkdown::render(input = here("scripts","HW8_INLA-OtherLibs.Rmd"),
-                  output_file = here("renders","HW8_INLA-OtherLibs.pdf"),
+rmarkdown::render(input = here("scripts","HW9_GrowthModels-CatchIndices.Rmd"),
+                  output_file = here("renders","HW9_GrowthModels-CatchIndices.pdf"),
                   output_format = "pdf_document")
 ```
