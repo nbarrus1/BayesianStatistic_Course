@@ -1,0 +1,19 @@
+model  {
+  for(j in 1:Nyear) {
+   a[j]~ dnorm(0, 1.0E-6) 
+   a2[j]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   z[i]~dbern(p[i])
+   logMean[i]<-a2[Year[i]]
+   Mu[i]<-z[i]*exp(logMean[i])
+   count[i]~dpois(Mu[i])
+  }
+  for(j in 1:Nyear) {
+   predmean[j] <- exp(a2[j])
+   logit(predp[j])<-a[j]
+   total.mean[j] <-predp[j] * predmean[j]
+  }
+}
+

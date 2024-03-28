@@ -1,0 +1,429 @@
+---
+title: "HW9-GrowthModels&CatchIndices"
+author: "Beth Babcock"
+date: "2024-03-28"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Purpose:
+
+The purpose of this markdown document is to work through Homework 9 in Dr. Babcock's Bayesian Statistics Course at the University of Miami. Homework 9 deals with growth models and abundance indices. 
+
+## General Start to Code
+
+```{r}
+
+rm(list = ls())
+
+######github#####
+#note, only needed after 90 days from 1/16/2024
+
+#  usethis::create_github_token()  
+#  gitcreds::gitcreds_set()
+
+#####check for r updates#####
+#note, updateing may take some time so plan accordingly
+
+#require(installr)
+
+#check.for.updates.R()
+
+#updateR() #only if needed
+
+#######check for package updates#####
+#note, updateing may take some time so plan accordingly
+
+#old.packages()
+
+# update.packages() #make the decision to the update the packages
+
+```
+  
+## Load packages
+
+```{r, results='hide'}
+library(INLAutils)
+library(INLA)
+library(tidyverse)
+library(R2jags)
+library(rstan)
+library(ggmcmc)
+library(purrr)
+library(magrittr)
+library(here)
+library(loo)
+library(DHARMa)
+library(lme4)
+library(rstanarm)
+library(shinystan)
+library(BayesFactor)
+
+theme_set(theme_bw(base_size=15))
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+## Data
+
+For problem 1) The file croakerF.csv, shows the age and total length of 204 female croakers (a fish), from the croaker data set in the FSA R library.  
+
+For problem 2) The data in marlin.csv are counts of blue marlins observed in longline sets across 5 years. Remember to code the years as 1, 2, 3 and 4 for the input data to the JAGS or STAN model.  
+
+```{r}
+
+#problem 1 data 
+
+croaker.data <- read_csv(here("data", "croakerF.csv"))
+
+head(croaker.data)
+
+#problem 2 data
+
+marlin.data <- read_csv(here("data","marlin.csv"))
+
+head(marlin.data)
+
+```
+
+
+## Problem 1) Growth models  
+
+#### A) Plot the length against age data. Is it obvious whether normal or lognormal will fit better?  
+
+```{r}
+
+croaker.data |> 
+  ggplot(aes(x = Age, y = ObsL))+
+  geom_point()
+
+```
+
+
+#### B) Fit a von Bertalanffy growth model using the Schnute formulation: with lognormal error and with uninformative priors. Set Age1 equal to 1, and Age2 equal to 10.  Don’t use any random effects. Note that this is a large data set, so don’t save too many iterations (use a large thin) when you are saving residuals and predicted values.  
+
+```{r}
+write("model 
+  {
+		for (i in 1:N){ 
+			# model prediction  
+			PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K* (Age2 -Age1))) 	
+			logPredL[i] <- log(PredL[i])  	# log-transformation of pred.value
+			ObsL[i] ~ dlnorm(logPredL[i], tau)  	# lognormal likelihood
+			logObsL[i] <-log(ObsL[i]) 	     # log transfomration of observed value
+			 resid[i] <- logObsL[i]-logPredL[i]  # residuals
+		 	Rep[i] ~ dlnorm(logPredL[i], tau) # replicated data set
+		 	logRep[i] <-log(Rep[i]) # replicated data set
+		  sresid2[i]<-(logObsL[i]-logPredL[i])*(logObsL[i]-logPredL[i])*tau   
+      rep.sresid2[i]<-(logRep[i]-logPredL[i])*(logRep[i]-logPredL[i])*tau 
+      LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau)-0.5*tau*(logObsL[i]-logPredL[i])^2-logObsL[i]
+		}
+  #priors specification
+     K ~ dunif(0,2)
+	   Age1<-1
+	   Age2<-10
+     L1~dunif(10,800) 	
+     L2~dunif(10,800) 	
+     tau~dgamma(0.001,0.001)
+  #Derived parameters
+    Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+    chi.square.obs<-sum(sresid2[])
+    chi.square.rep<-sum(rep.sresid2[])
+    p.value<-step(chi.square.obs-chi.square.rep)
+    dev <- -2*sum(LL[])
+}
+",file=here("JAGS_mods","HW9_VonBertLnormSchnute_lognorm.txt"))
+
+init1=list(tau=1,L1=200,L2=400,K=0.6)
+init2=list(tau=0.5,L1=300,L2=450,K=0.4)
+
+croaker.list <- list(N = length(croaker.data$Age),
+                     Age = croaker.data$Age,
+                     ObsL = croaker.data$ObsL)
+
+HW9_SchnuteVBLG_lnorm_jags<-jags(croaker.list,list(init1,init2),
+               model.file=here("JAGS_mods","HW9_VonBertLnormSchnute_lognorm.txt"),
+              parameters.to.save=c("K","Linf","L1","L2","tau","p.value","LL","dev",
+                "resid","PredL","logPredL", "chi.square.obs","chi.square.rep"),
+              n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+
+```
+
+#### Show the summaries of the parameters (L1, L2, K and precision, and the derived quantity Linf), plots of residual against predicted value and the qqnormal plot of the residuals. Does the model appear to fit the data adequately?  
+
+*summary*  
+
+```{r}
+parameters <- c("L1","L2","K","tau","Linf")
+
+res2<-HW9_SchnuteVBLG_lnorm_jags$BUGSoutput
+
+res2$summary[parameters,]
+```
+  
+  *residual plots*  
+  
+
+```{r}
+
+n<-length(croaker.data$Age)
+
+sumtab<-res2$summary
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("logPredL[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"])
+ggplot(dfcheck)+
+  geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+ggplot(dfcheck,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+
+```
+
+
+#### C) Now fit the same model with normal error.  Show the summaries of the parameters, plots of residual against predicted value and the qqnormal plot of the residuals. Does the model appear to fit the data adequately?   
+
+*run the model*  
+
+```{r}
+write("model 
+  {
+		for (i in 1:N){ 
+			# model prediction  
+			PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K* (Age2 -Age1))) 	
+			ObsL[i] ~ dnorm(PredL[i], tau)  	# lognormal likelihood
+			 resid[i] <- ObsL[i]-PredL[i]  # residuals
+		 	Rep[i] ~ dnorm(PredL[i], tau) # replicated data set
+		  sresid2[i]<-(ObsL[i]-PredL[i])*(ObsL[i]-PredL[i])*tau   
+      rep.sresid2[i]<-(Rep[i]-PredL[i])*(Rep[i]-PredL[i])*tau 
+      LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau)-0.5*tau*(ObsL[i]-PredL[i])*(ObsL[i]-PredL[i])
+		}
+  #priors specification
+     K ~ dunif(0,2)
+	   Age1<-1
+	   Age2<-10
+     L1~dunif(10,800) 	
+     L2~dunif(10,800) 	
+     tau~dgamma(0.001,0.001)
+  #Derived parameters
+    Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+    chi.square.obs<-sum(sresid2[])
+    chi.square.rep<-sum(rep.sresid2[])
+    p.value<-step(chi.square.obs-chi.square.rep)
+    dev <- -2*sum(LL[])
+}
+",file=here("JAGS_mods","HW9_VonBertLnormSchnute_norm.txt"))
+
+init1=list(tau=1,L1=200,L2=400,K=0.6)
+init2=list(tau=0.5,L1=300,L2=450,K=0.4)
+
+croaker.list <- list(N = length(croaker.data$Age),
+                     Age = croaker.data$Age,
+                     ObsL = croaker.data$ObsL)
+
+HW9_SchnuteVBLG_norm_jags<-jags(croaker.list,list(init1,init2),
+               model.file=here("JAGS_mods","HW9_VonBertLnormSchnute_norm.txt"),
+              parameters.to.save=c("K","Linf","L1","L2","tau","p.value","LL",
+                "resid","PredL", "chi.square.obs","chi.square.rep","dev"),
+              n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+
+```
+  
+*model summary*  
+
+```{r}
+parameters <- c("L1","L2","K","tau","Linf")
+
+res2_n<-HW9_SchnuteVBLG_norm_jags$BUGSoutput
+
+res2_n$summary[parameters,]
+```
+
+  
+   *residual plots*  
+  
+
+```{r}
+
+n<-length(croaker.data$Age)
+
+sumtab<-res2_n$summary
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("PredL[",1:n,"]")
+dfcheck<-data.frame(Predicted=sumtab[meanrows,"mean"],
+  Residual=sumtab[residrows,"mean"])
+ggplot(dfcheck)+
+  geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+ggplot(dfcheck,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+
+```
+
+#### D) Compare the two models with WAIC. Is normal or lognormal better?  (Hint: If you are using JAGS, you calculate the deviance as -2*sum(loglikelihood) to make sure you get the same deviance value that JAGS calculates. This is a way to check that you typed in the formula for loglikelihood correctly. STAN does this calculation of log likelihood for you so you don’t need this.  
+
+*check deviance*  
+
+```{r}
+#lognormal
+HW9_SchnuteVBLG_lnorm_jags$BUGSoutput$summary[c("dev","deviance"),]
+
+#normal
+HW9_SchnuteVBLG_norm_jags$BUGSoutput$summary[c("dev","deviance"),]
+
+```
+
+
+```{r}
+
+n<-length(croaker.data$Age)
+
+WAIC.table <- tibble(model = c("Lognormal", "normal"),
+                     LL.ls = c(list(HW9_SchnuteVBLG_lnorm_jags$BUGSoutput$sims.matrix[,paste0("LL[",1:n,"]")]),    list(HW9_SchnuteVBLG_norm_jags$BUGSoutput$sims.matrix[,paste0("LL[",1:n,"]")]))
+                     )|> 
+  mutate(WAIC.ls = map(LL.ls, waic),
+         elpd_waic = map_dbl(WAIC.ls,c(1,1)),
+         p_waic = map_dbl(WAIC.ls,c(1,2)),
+         waic = map_dbl(WAIC.ls,c(1,3)),
+         deltaWAIC = waic - min(waic),
+         weight = round(exp(-2*deltaWAIC)/sum(exp(-2*deltaWAIC)),digits = 5))
+
+
+WAIC.table |> select(-LL.ls,-WAIC.ls) |> knitr::kable(caption = "WAIC Table")
+
+```
+
+
+
+#### E) Now add ageing error to the lognormal model, assuming that the input age is normally distributed around the true age with a standard deviation of 0.5. Give the true ages a uniform prior between 1 and 10. Show the summary statistics.  How does this change the resulting estimates of Linf and K? (Note that you must use the estimated real age not the input age in the von Bertalanffy equation to predict length. Also, no need to calculate WAIC for this one).    
+
+
+*run model*  
+
+```{r}
+write("model 
+  {
+		for (i in 1:N){ 
+		  z[i] ~ dunif(1,10)
+		  Age[i] ~ dnorm(z[i],age_tau)
+			# model prediction  
+			PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (z[i] -Age1)))/(1 - exp(- K* (Age2 -Age1))) 	
+			logPredL[i] <- log(PredL[i])  	# log-transformation of pred.value
+			ObsL[i] ~ dlnorm(logPredL[i], tau)  	# lognormal likelihood
+			logObsL[i] <-log(ObsL[i]) 	     # log transfomration of observed value
+			 resid[i] <- logObsL[i]-logPredL[i]  # residuals
+		 	Rep[i] ~ dlnorm(logPredL[i], tau) # replicated data set
+		 	logRep[i] <-log(Rep[i]) # replicated data set
+		  sresid2[i]<-(logObsL[i]-logPredL[i])*(logObsL[i]-logPredL[i])*tau   
+      rep.sresid2[i]<-(logRep[i]-logPredL[i])*(logRep[i]-logPredL[i])*tau 
+      LL[i] <- -0.5*log(2*3.14159)+0.5*log(tau)-0.5*tau*(logObsL[i]-logPredL[i])^2-logObsL[i]
+		}
+  #priors specification
+     K ~ dunif(0,2)
+	   Age1<-1
+	   Age2<-10
+     L1~dunif(10,800) 	
+     L2~dunif(10,800) 	
+     tau~dgamma(0.001,0.001)
+  #Derived parameters
+    age_tau <- 1/(0.5)^2
+    Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+    chi.square.obs<-sum(sresid2[])
+    chi.square.rep<-sum(rep.sresid2[])
+    p.value<-step(chi.square.obs-chi.square.rep)
+    dev <- -2*sum(LL[])
+}
+",file=here("JAGS_mods","HW9_VonBertLnormSchnute_lognorm_ageerror.txt"))
+
+init1=list(tau=1,L1=200,L2=400,K=0.6)
+init2=list(tau=0.5,L1=300,L2=450,K=0.4)
+
+croaker.list <- list(N = length(croaker.data$Age),
+                     Age = croaker.data$Age,
+                     ObsL = croaker.data$ObsL)
+
+HW9_SchnuteVBLG_lnorm.zage_jags<-jags(croaker.list,list(init1,init2),
+               model.file=here("JAGS_mods","HW9_VonBertLnormSchnute_lognorm_ageerror.txt"),
+              parameters.to.save=c("K","Linf","L1","L2","tau","p.value","LL","dev",
+                "resid","PredL","logPredL", "chi.square.obs","chi.square.rep"),
+              n.chains=2,n.iter=110000,n.burnin=10000,n.thin=10)
+
+```
+  
+  *compare summaries*
+ 
+```{r}
+#lognormal
+HW9_SchnuteVBLG_lnorm_jags$BUGSoutput$summary[c("Linf","K"),]
+
+#lognormal with age error
+HW9_SchnuteVBLG_lnorm.zage_jags$BUGSoutput$summary[c("Linf","K"),]
+
+```
+
+## Problem 2) Delta lognormal  
+
+#### A) Apply a zero inflated Poisson model to the data. Use a logit link to estimate the probability of a positive observation as a function of the fixed effect of year and use a Bernoulli random variable (z) to estimate whether observations are positive or negative. Estimate the effect of year on the log of the mean count if positive as a fixed effect of year and use a Poisson likelihood for the counts. If you have trouble getting the model to run, try initializing the Bernoulli random variable for the positive catch (z in the example code) equal to 1 for all sets.  
+
+#### Show the summary statistics of the estimated parameters, making sure the model has converged. Plot the overall predicted mean count in each year from the model with credible intervals.  
+
+  
+  *run the model*
+
+```{r}
+
+write("model  {
+  for(j in 1:Nyear) {
+   a[j]~ dnorm(0, 1.0E-6) 
+   a2[j]~ dnorm(0, 1.0E-6) 
+ }
+  for(i in 1:N)  {
+   logit(p[i])<-a[Year[i]]
+   z[i]~dbern(p[i])
+   logMean[i]<-a2[Year[i]]
+   Mu[i]<-z[i]*exp(logMean[i])
+   count[i]~dpois(Mu[i])
+  }
+  for(j in 1:Nyear) {
+   predmean[j] <- exp(a2[j])
+   logit(predp[j])<-a[j]
+   total.mean[j] <-predp[j] * predmean[j]
+  }
+}
+",file=here("JAGS_mods","HW9_ZIP.txt"))
+
+marlin.list <- list(N = length(marlin.data$Count),
+                    Year = marlin.data$Year,
+                    count = marlin.data$Count,
+                    Nyear = length(unique(marlin.data$Year)))
+
+HW9_ZIP_jags <- jags(marlin.list, 
+                     parameters.to.save=c("predmean","predp","total.mean"), 
+              model.file=here("JAGS_mods","HW9_ZIP.txt"),
+              n.chains=2, n.iter=110000, 
+              n.burnin=10000,n.thin=2)
+
+
+```
+
+
+
+#### B) Fit an integrated (i.e. all in one chunk of JAGS or STAN code) delta-lognormal model to these data, with the same model structure, i.e a fixed effect of all five years in both the binomial and lognormal parts of the model. Show the summary statistics of the estimated parameters, making sure the model has converged. Plot the overall predicted mean count in each year from the model with credible intervals.  
+
+
+
+#### C) Which model do you think is better, a or b? Explain why you can’t compare them with information criteria. Did you get the same trend across years?  
+
+
+
+
+
+```{r, eval=FALSE, include=FALSE}
+rmarkdown::render(input = here("scripts","HW8_INLA-OtherLibs.Rmd"),
+                  output_file = here("renders","HW8_INLA-OtherLibs.pdf"),
+                  output_format = "pdf_document")
+```
