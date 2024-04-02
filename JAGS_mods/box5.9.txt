@@ -1,0 +1,25 @@
+model{
+  a ~ dnorm(0, 1.0E-6)  # uninformative priors for the variables
+  b[1] ~ dnorm(0, 1.0E-6)
+  b[2] ~ dnorm(0, 1.0E-6)
+  b[3] ~ dnorm(0, 1.0E-6)
+  d[1] ~ dunif(0, 1)  # detection probabilities when the species is present
+  d[2] ~ dunif(0, 1)
+  mLnCV <- mean(LnCV[])  # average catchment volume
+  for (i in 1:64)  # for each of the 64 sites
+  {
+    logit(p[i]) <- a + b[1]*(LnCV[i] - mLnCV) + b[2]*palms[i] + b[3]*(LnCV[i] - mLnCV)*palms[i]  # probability of presence
+    Lp[i] ~ dbern(p[i])  # actual presence
+    dd1[i] <- d[1]*Lp[i]  # detectability of nocturnal searches
+    dd2[i] <- d[2]*Lp[i]  # detectability of automatic tape recorders
+    Y1[i] ~ dbin(dd1[i], V1[i])  # number of detections with searches
+    Y2[i] ~ dbin(dd2[i], V2[i])  # number of detections with tapes
+  }
+  # predicted relationships
+  for (i in 1:20)
+  {
+    LVol[i] <- 2 + 3*i/20  # covers the range of stream sizes
+    logit(predpalms[i]) <- a + (b[1] + b[3])*(LVol[i] - mLnCV) + b[2]
+    logit(prednopalms[i]) <- a + b[1]*(LVol[i] - mLnCV)
+  }
+}

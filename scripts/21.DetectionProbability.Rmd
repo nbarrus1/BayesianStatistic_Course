@@ -1,0 +1,424 @@
+---
+title: "Lecture 21 Detection probability"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(here)
+theme_set(theme_bw())
+```
+
+## Voles example to estimate total population size. ROyle 2009 version. 
+
+```{r}
+write("model {
+psi~dunif(0,1)  #prob in population
+a0~dnorm(0,.001) #mean of logit model 
+for(i in 1:(nind+nz)){  #loop over all animals 
+   z[i]~dbern(psi)
+   for(t in 1:T){#loop over 5 capture periods
+    logit(p[i,t])<- a0
+    mu[i,t]<-p[i,t]*z[i]
+    Y[i,t]~ dbern(mu[i,t])
+ }}
+N<-sum(z[1:(nind+nz)])
+}",here("JAGS_mods","voleNoWeight.txt"))
+
+voles<-read.csv(here("data", "voles.csv"))
+summary(voles)
+voldatNoWeight<-list(Y=as.matrix(voles[,1:5]),z=voles$z,nind=56,nz=50,T=5)
+init1<-list(list(psi=0.9),list(psi=0.8))
+voleresNoWeight<-jags(voldatNoWeight,init1,parameters.to.save = c("psi","p","z","N"),
+                      model.file=here("JAGS_mods","voleNoWeight.txt"),
+                      n.chains = 2,n.burnin = 1000,n.iter = 11000,n.thin=1)
+
+round(voleresNoWeight$BUGSoutput$summary[1:5,],2)
+ggsVole<-ggs(as.mcmc(voleresNoWeight))
+ggs_density(filter(ggsVole,Parameter=="p[1,1]"))
+ggsN<-filter(ggsVole,Parameter=="N")
+ggplot(ggsN,aes(x=value))+geom_histogram()+xlab("Population size (N)")
+```
+
+Voles with weight covariate
+
+```{r}
+write("model {
+# Prior distributions for model parameters
+psi~dunif(0,1)
+mu.wt~dnorm(0,.001)
+tau.wt~dgamma(.001,.001)
+sigma<-sqrt(1/tau.wt)
+a0~dnorm(0,.001)
+#a1~dnorm(0,.001)
+beta~dnorm(0,.001)
+for(i in 1:(nind+nz)){
+ wt[i]~dnorm(mu.wt,tau.wt)T(-6,6)
+ z[i]~dbern(psi)
+ for(t in 1:T){
+#  logit(p[i,t])<- a0*(1-prevcap[i,t]) + a1*prevcap[i,t] + beta*wt[i] 
+ #logit(p[i,t])<- a0
+  logit(p[i,t])<- a0+ beta*wt[i]
+  mu[i,t]<-p[i,t] *z[i]
+  Y[i,t]~ dbern(mu[i,t])
+ }
+}
+N<-sum(z[1:(nind+nz)])
+}
+",file=here("JAGS_mods","voleWeight.txt"))
+
+voldatWeight<-list(Y=as.matrix(voles[,1:5]),z=voles$z,wt=voles$wt,nind=56,nz=50,T=5)
+init1<-list(list(a0=.6,beta=1,psi=0.4,mu.wt=0.1,tau.wt=1,z=c(rep(NA,56),rep(1,50)),wt=c(rep(NA,56),rep(0,50))),
+            list(a0=.5,beta=1.1,psi=0.5,mu.wt=0,tau.wt=0.9,z=c(rep(NA,56),rep(1,50)),wt=c(rep(NA,56),rep(0.1,50))))
+voleresWeight<-jags(voldatWeight,init1,parameters.to.save = 
+                      c("psi","p","z","N","a0","beta","mu.wt","tau.wt"),
+                      model.file=here("JAGS_mods","voleWeight.txt"),
+                      n.chains = 2,n.burnin = 1000,n.iter = 11000,n.thin=1)
+params=c("N","a0","beta","mu.wt","tau.wt")
+round(voleresWeight$BUGSoutput$summary[params,],2)
+ggsVole<-ggs(as.mcmc(voleresWeight))
+ggs_density(filter(ggsVole,Parameter=="psi"))
+ggplot(filter(ggsVole,Parameter=="N"),aes(x=value))+
+  geom_histogram(binwidth=1)+xlab("Population size (N)")
+
+#Make plot of weight model
+prow<-paste0("p[",1:56,",1]")
+df<-data.frame(voleresWeight$BUGSoutput$summary[prow,c("2.5%","50%","97.5%")])
+df$Weight<-voldatWeight$wt[1:56]
+ggplot(df,aes(x=Weight,y=X50.,ymin=X2.5.,ymax=X97.5.))+geom_line()+
+  geom_ribbon(alpha=.5)+ylab("Probability of capture")+theme_bw()+
+  geom_rug(sides="b")
+```
+
+## Gentian OpenBUGS Ecology Example
+
+```{r}
+gentian<-read.csv(here("data","gentian.csv"))
+summary(gentian)
+GentianDat<-list(y= select(gentian,y1:y3),
+                 experience=select(gentian,experience1:experience3),
+                 wetness=gentian$wetness, 
+                 R=nrow(gentian), 
+                 T=3)
+write("model 	{
+         		# Priors
+         		alpha.occ ~ dunif(-20, 20)
+         		beta.occ ~ dunif(-20, 20)
+         		alpha.p ~ dunif(-20, 20)
+         		beta1.p ~ dunif(-20, 20)
+         		beta2.p ~ dunif(-20, 20)
+
+         		# Likelihood
+         		for (i in 1:R) {
+         			# Model for partially latent state
+            			 z[i] ~ dbern(psi[i])		# True occupancy z at site i
+            			 logit(psi[i]) <- alpha.occ + beta.occ * wetness[i]
+            			 for (j in 1:T) {
+                			# Observation model for actual observations
+               				 y[i, j] ~ dbern(eff.p[i, j])	# Det.-nondet. at i and j
+               				 eff.p[i, j] <- z[i] * p[i, j]
+               				 logit(p[i, j]) <- alpha.p + beta1.p * wetness [i] + beta2.p * experience[i, j]
+            			 }
+        		 }
+         	 	# Derived quantity
+           		occ.fs <- sum(z[ ])	# Finite sample number of occupied sites
+	}
+",file=here("JAGS_mods","gentian.txt"))
+z<-rowSums(GentianDat$y)
+z<-ifelse(z>0,1,0)
+#z<-rep(1,150)
+sum(z)
+65/150
+
+init1<-list(list(z=z),list(z=z))
+GentianRes<-jags(GentianDat,init1,parameters.to.save = c("alpha.p","beta1.p","beta2.p","alpha.occ","beta.occ","occ.fs"),
+                 n.chains = 2,n.burnin = 1000,n.iter = 11000,n.thin=1,
+                 model.file = here("JAGS_mods","gentian.txt"))
+round(GentianRes$BUGSoutput$summary,2)
+```
+
+## Birds from OpenBUGS ecology examples. Estimating species richness.
+
+```{r}
+write("	model { 
+	# prior distributions 
+		psi~dunif(0,1) 
+		mu~dnorm(0,0.001) 
+		tau~dgamma(.001,.001) # zero-inflated binomial mixture model for 
+		                                          # the augmented data 
+		for(i in 1: (nind + nz)){ 
+			z[i] ~ dbern(psi) 
+			eta[i]~ dnorm(mu, tau) 
+			logit(p[i])<- eta[i] 
+			muy[i]<-p[i] * z[i] 
+			y[i] ~ dbin(muy[i], J) 
+		} 
+		# Derived parameters 
+		N<-sum(z[1 : (nind + nz)]) 
+		sigma<-sqrt(1  / tau) 
+	}   
+",file=here("JAGS_mods","birds.txt"))
+
+birdsData<-list(y= c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 
+                     3, 3, 3, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 7, 7, 7, 8, 8, 9, 10, 10,
+                     11, 11, 11, 11, 12, 12, 12, 12, 14, 16, 16, 17, 17, 17, 18, 19, 20, 21, 
+                     25, 26, 28, 30, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                     0, 0, 0, 0, 0, 0, 0), nind=71, nz=250, J=50) 
+init1<-list(list(mu = 0, tau = 1, psi = 0.5,
+                 z = c(1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1, 1,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0)),
+            list(mu = 1, tau = 2, psi = 0.15,
+                 z = c(1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,1, 1, 1, 1, 1,
+                       1, 1, 1, 1, 1,1, 1, 1, 1, 1, 1,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,0, 0, 0, 0, 0,
+                       0, 0, 0, 0, 0,0, 0, 0, 0, 0)))
+jagsBird<-jags(birdsData,init1,parameters.to.save=c("mu","tau","psi","eta","N"),
+               n.chains = 2,n.burnin = 1000,n.iter = 11000,n.thin=1,
+               model.file = here("JAGS_mods","birds.txt"))
+round(jagsBird$BUGSoutput$summary[c("mu","tau","psi","N"),],2)
+ggsBird<-ggs(as.mcmc(jagsBird))
+ggs_density(filter(ggsBird,Parameter=="psi"))
+ggplot(filter(ggsBird,Parameter=="N"),aes(x=value))+
+  geom_histogram(binwidth=1)+xlab("Species richness (N)")
+
+#Frequentist species richness
+library(SpadeR)
+ChaoSpecies(birdsData$y[1:71],datatype = "abundance")
+```
+
+## Impala distance sampling
+
+```{r}
+ImpalaDat<-list(y=
+                  c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                x=c(0.72, 0.26, 0.58, 0.92, 1.64, 0.85, 1.64, 1.57, 0.22, 0.72, 
+                    0.87, 0.51, 0, 0.73, 0, 1.29, 1.64, 0.72, 0.3, 0.71, 1.51, 0.69, 
+                    0.9, 0.65, 1.66, 0.38, 3.78, 0.78, 0.42, 0, 4, 1.75, 0.3, 0.35, 
+                    0.86, 0.32, 2, 2.72, 0.26, 0.77, 0.41, 2, 0.86, 0, 0.94, 0.55, 
+                    0.1, 0.85, 0, 0.78, 0, 0.96, 0, 0.64, 1.88, 0, 1.61, 1.5, 0.64, 
+                    1.93, 1.06, 1.15, 1.43, 1.29, 2.46, 1.23, 1.23, 1.53, 1.43, 0.34, 
+                    0.96, 2.6, 0.09, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 
+                    NA),
+                nind=73,
+                nz=300)
+str(ImpalaDat)
+write("	model 
+	{
+	# Prior distributions
+		theta ~ dunif(0, 10)
+		theta2 <- theta  *theta
+		psi ~ dunif(0,1)
+
+		for(i in 1 : (nind+nz)){
+			z[i] ~ dbern(psi)  # latent indicator variables from data augmentation
+			x[i] ~ dunif(0, 4)   # distance is a random variable
+			logp[i]<-  -((x[i] * x[i]) / theta2)  
+			p[i] <- exp(logp[i])
+			mu[i] <- z[i] * p[i] 
+			y[i] ~ dbern(mu[i])   # observation model
+		}
+		N<-sum(z[1:(nind + nz)])
+		D<- N / 48     # 48 km*km = total area of transects
+	}",file=here("JAGS_mods","impala.txt"))
+
+init1<-list(list(theta = 3, psi = 0.5, z = c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+,list(theta = 2, psi = 0.6, z = c(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
+                                  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                                  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+)
+str(init1)
+
+jagsImpala<-jags(ImpalaDat,init1,parameters.to.save=c("psi","theta","D","N","p"),
+               n.chains = 2,n.burnin = 1000,n.iter = 11000,n.thin=1,
+               model.file = here("JAGS_mods","impala.txt"))
+round(jagsImpala$BUGSoutput$summary[c("psi","theta","N","D"),],2)
+ggsImpala<-ggs(as.mcmc(jagsImpala))
+ggs_density(filter(ggsImpala,Parameter=="theta"))
+ggsD=filter(ggsImpala,Parameter=="D")
+ggplot(ggsD,aes(x=value))+geom_histogram(binwidth=0.1)+xlab(expression(paste("Impala density (#/",m^2,")")))+theme_bw()
+
+impala<-data.frame(y=ImpalaDat$y,x=ImpalaDat$x)
+ggplot(impala,aes(x=x))+
+  geom_histogram(binwidth=0.5,fill="lightblue",col="black")+
+  xlab("Distance (100 m) ")
+
+funcrow<-paste0("p[",1:73,"]")
+df<-data.frame(jagsImpala$BUGSoutput$summary[funcrow,c("2.5%","50%","97.5%")])
+df$x<-impala$x[1:73]
+ggplot(df,aes(x=x,ymin=X2.5.,ymax=X97.5.,y=X50.))+xlab("Distance (m) ")+
+ geom_ribbon(alpha=.5)+
+  geom_line()+
+  ylab("Detection probability")+
+  geom_rug(sides="b")
+ 
+```
+
+
+## Frog detection probability box 5.9  ###
+
+```{r}
+frog<-read.csv(here("data","frog.csv"))
+froglong<-data.frame(LnCV=rep(frog$LnCV,2),
+                     palms=factor(rep(frog$palms,2)),
+                     y=c(frog$Y1,frog$Y2),
+                     N=c(frog$V1,frog$V2),
+                     survey=rep(c("1","2"),each=dim(frog)[1]))
+ggplot(froglong)+geom_point(aes(x=LnCV,y=y/N,shape=survey,col=palms))+theme_bw()+
+  ylab("Proportion of observations with frogs")+xlab("log catchment volume")
+
+write("model{
+  a ~ dnorm(0, 1.0E-6)  # uninformative priors for the variables
+  b[1] ~ dnorm(0, 1.0E-6)
+  b[2] ~ dnorm(0, 1.0E-6)
+  b[3] ~ dnorm(0, 1.0E-6)
+  d[1] ~ dunif(0, 1)  # detection probabilities when the species is present
+  d[2] ~ dunif(0, 1)
+  mLnCV <- mean(LnCV[])  # average catchment volume
+  for (i in 1:64)  # for each of the 64 sites
+  {
+    logit(p[i]) <- a + b[1]*(LnCV[i] - mLnCV) + b[2]*palms[i] + b[3]*(LnCV[i] - mLnCV)*palms[i]  # probability of presence
+    Lp[i] ~ dbern(p[i])  # actual presence
+    dd1[i] <- d[1]*Lp[i]  # detectability of nocturnal searches
+    dd2[i] <- d[2]*Lp[i]  # detectability of automatic tape recorders
+    Y1[i] ~ dbin(dd1[i], V1[i])  # number of detections with searches
+    Y2[i] ~ dbin(dd2[i], V2[i])  # number of detections with tapes
+  }
+  # predicted relationships
+  for (i in 1:20)
+  {
+    LVol[i] <- 2 + 3*i/20  # covers the range of stream sizes
+    logit(predpalms[i]) <- a + (b[1] + b[3])*(LVol[i] - mLnCV) + b[2]
+    logit(prednopalms[i]) <- a + b[1]*(LVol[i] - mLnCV)
+  }
+}",file=here("JAGS_mods","box5.9.txt"))
+
+params<-c("a","b","d","predpalms","prednopalms")
+init1<-list(list(a=2, b=c(0.1,.1,.1), d=c(0.2, 0.2),Lp=rep(1,64)),list(a=4, b=c(0,0,0), d=c(0.5, 0.5),Lp=rep(1,64)))
+res5.9<-jags(frog,init1,model.file=here("JAGS_mods","box5.9.txt"),
+             parameters.to.save=params,n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+round(res5.9$BUGSoutput$summary[c("a","b[1]","b[2]","b[3]","d[1]","d[2]"),],2)
+
+predrows<-c(paste0("prednopalms[",1:20,"]"),paste0("predpalms[",1:20,"]"))
+predvals<-data.frame(LnCV=rep(2 + 3*(1:20)/20  ,2),
+                     Predict=res5.9$BUGSoutput$summary[predrows,"mean"],
+                     lci=res5.9$BUGSoutput$summary[predrows,"2.5%"],
+                     uci=res5.9$BUGSoutput$summary[predrows,"97.5%"],
+                     palms=rep(c("0","1"),each=20))
+
+predvals$palms<-factor(predvals$palms)
+ggplot(predvals)+
+  geom_line(aes(x=LnCV,y=Predict,col=palms))+
+  geom_ribbon(aes(x=LnCV,ymin=lci,ymax=uci,fill=palms),alpha=0.3)+
+  ylab("Proportion of observations with frogs")+xlab("log catchment volume")+theme_bw()
+
+```

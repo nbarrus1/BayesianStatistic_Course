@@ -1,0 +1,23 @@
+model {
+# Prior distributions for model parameters
+psi~dunif(0,1)
+mu.wt~dnorm(0,.001)
+tau.wt~dgamma(.001,.001)
+sigma<-sqrt(1/tau.wt)
+a0~dnorm(0,.001)
+#a1~dnorm(0,.001)
+beta~dnorm(0,.001)
+for(i in 1:(nind+nz)){
+ wt[i]~dnorm(mu.wt,tau.wt)T(-6,6)
+ z[i]~dbern(psi)
+ for(t in 1:T){
+#  logit(p[i,t])<- a0*(1-prevcap[i,t]) + a1*prevcap[i,t] + beta*wt[i] 
+ #logit(p[i,t])<- a0
+  logit(p[i,t])<- a0+ beta*wt[i]
+  mu[i,t]<-p[i,t] *z[i]
+  Y[i,t]~ dbern(mu[i,t])
+ }
+}
+N<-sum(z[1:(nind+nz)])
+}
+

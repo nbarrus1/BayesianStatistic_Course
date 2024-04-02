@@ -1,0 +1,12 @@
+model {
+psi~dunif(0,1)  #prob in population
+a0~dnorm(0,.001) #mean of logit model 
+for(i in 1:(nind+nz)){  #loop over all animals 
+   z[i]~dbern(psi)
+   for(t in 1:T){#loop over 5 capture periods
+    logit(p[i,t])<- a0
+    mu[i,t]<-p[i,t]*z[i]
+    Y[i,t]~ dbern(mu[i,t])
+ }}
+N<-sum(z[1:(nind+nz)])
+}
