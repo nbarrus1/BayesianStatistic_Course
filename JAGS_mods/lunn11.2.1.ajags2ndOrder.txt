@@ -1,0 +1,19 @@
+model {
+  # AR(2):
+  for (t in 1:n) {
+    y[t]    ~ dnorm(m[t], tau)
+    yr[t]  <- 1769 + t
+    eps[t] <- y[t] - m[t]
+  }
+  for (t in 3:n) {
+    m[t]   <- c + theta*y[t-1]+beta*y[t-2]
+  }
+  m[1]     ~ dnorm(0, 0.0001)
+  m[2]     ~ dnorm(0, 0.0001)
+  beta     ~ dnorm(0, 0.0001)
+  theta     ~ dnorm(0, 0.0001)
+  c         ~ dnorm(0, 0.0001)
+  tau      <- 1/pow(sigma, 2)
+  sigma     ~ dunif(0, 100)
+}
+
