@@ -1,0 +1,434 @@
+---
+title: "Lecture 22 Time series analysis"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(INLA)
+library(kableExtra)
+library(gridExtra)
+library(here)
+theme_set(theme_bw())
+```
+
+
+## ARMA in JAGS
+
+```{r}
+
+y = c(100.8, 81.6, 66.5, 34.8, 30.6, 7, 19.8, 92.5,
+      154.4, 125.9, 84.8, 68.1, 38.5, 22.8, 10.2, 24.1, 82.9,
+      132, 130.9, 118.1, 89.9, 66.6, 60, 46.9, 41, 21.3, 16,
+      6.4, 4.1, 6.8, 14.5, 34, 45, 43.1, 47.5, 42.2, 28.1, 10.1,
+      8.1, 2.5, 0, 1.4, 5, 12.2, 13.9, 35.4, 45.8, 41.1, 30.4,
+      23.9, 15.7, 6.6, 4, 1.8, 8.5, 16.6, 36.3, 49.7, 62.5, 67,
+      71, 47.8, 27.5, 8.5, 13.2, 56.9, 121.5, 138.3, 103.2,
+      85.8, 63.2, 36.8, 24.2, 10.7, 15, 40.1, 61.5, 98.5, 124.3,
+      95.9, 66.5, 64.5, 54.2, 39, 20.6, 6.7, 4.3, 22.8, 54.8,
+      93.8, 95.7, 77.2, 59.1, 44, 47, 30.5, 16.3, 7.3, 37.3,
+      73.9)
+
+yr=1770:1869
+sunspot<-data.frame(Year=yr,y=y)
+ggplot(sunspot,aes(x=Year,y=y))+geom_point()+geom_line()
+```  
+First order autoregression
+
+```{r}
+write("model {
+  # AR(1):
+  for (t in 1:n) {
+    y[t]    ~ dnorm(m[t], tau)
+    yr[t]  <- 1769 + t
+    eps[t] <- y[t] - m[t]
+  }
+  for (t in 2:n) {
+    m[t]   <- c + theta*y[t-1]
+  }
+  m[1]     ~ dnorm(0, 0.0001)
+  theta     ~ dnorm(0, 0.0001)
+  c         ~ dnorm(0, 0.0001)
+  tau      <- 1/pow(sigma, 2)
+  sigma     ~ dunif(0, 100)
+}
+",file=here("JAGS_mods","lunn11.2.1.ajags.txt"))
+
+dat1<-list(n=100,y=y)
+
+resAR1<-jags(dat1,
+           parameters.to.save=c("c","theta","sigma","m","eps","tau"),
+          model.file=here("JAGS_mods","lunn11.2.1.ajags.txt"),
+          n.chains=2,n.iter=10000,n.burnin=1000,n.thin=1)
+
+kable(resAR1$BUGSoutput$summary[c("c","theta","sigma","m[1]","tau"),],digits=3)
+
+mrows<-paste0("m[",1:100,"]")
+erows<-paste0("eps[",1:100,"]")
+predar<-data.frame(resAR1$BUGSoutput$summary[mrows,c("mean","2.5%","97.5%")])
+predar$resid<-resAR1$BUGSoutput$summary[erows,"mean"]
+predar<-cbind(predar,sunspot)
+g1<-ggplot(predar,aes(x=Year))+
+  geom_point(aes(y=y))+
+  geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=X2.5.,ymax=X97.5.),alpha=0.3)
+g2<-ggplot(predar,aes(x=Year,y=resid))+
+  geom_point()+
+  geom_abline(slope=0,intercept=0)
+grid.arrange(g1,g2)
+```
+
+2nd order AR in JAGS
+
+```{r}
+write("model {
+  # AR(2):
+  for (t in 1:n) {
+    y[t]    ~ dnorm(m[t], tau)
+    yr[t]  <- 1769 + t
+    eps[t] <- y[t] - m[t]
+  }
+  for (t in 3:n) {
+    m[t]   <- c + theta*y[t-1]+beta*y[t-2]
+  }
+  m[1]     ~ dnorm(0, 0.0001)
+  m[2]     ~ dnorm(0, 0.0001)
+  beta     ~ dnorm(0, 0.0001)
+  theta     ~ dnorm(0, 0.0001)
+  c         ~ dnorm(0, 0.0001)
+  tau      <- 1/pow(sigma, 2)
+  sigma     ~ dunif(0, 100)
+}
+",file=here("JAGS_mods","lunn11.2.1.ajags2ndOrder.txt"))
+
+resAR2<-jags(dat1,
+           parameters.to.save=c("c","theta","beta","sigma","m","eps"),
+          model.file=here("JAGS_mods","lunn11.2.1.ajags2ndOrder.txt"),
+          n.chains=2,n.iter=10000,n.burnin=1000,n.thin=1)
+
+resAR2$BUGSoutput$summary[c("c","theta","beta","sigma","m[1]"),] %>% kable(digits = 2)
+resAR2$BUGSoutput$DIC
+predar2<-cbind(data.frame(resAR2$BUGSoutput$summary[mrows,c("mean","2.5%","97.5%")]),sunspot)
+predar2$resid<-resAR2$BUGSoutput$summary[erows,"mean"]
+g1<-ggplot(predar2,aes(x=Year))+
+  geom_point(aes(y=y))+
+  geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=X2.5.,ymax=X97.5.),alpha=0.3)
+g2<-ggplot(predar2,aes(x=Year,y=resid))+
+  geom_point()+
+  geom_abline(slope=0,intercept=0)
+grid.arrange(g1,g2)
+```
+
+
+# Second order moving average in JAGS 
+
+```{r}
+write("model {
+  for (t in 1:n) {
+    y[t]     ~ dnorm(m[t], tau)
+    yr[t]   <- 1769 + t
+    eps[t]  <- y[t] - m[t]
+  }
+  for (t in 3:n) {
+    m[t]    <- c + phi[1]*eps[t-1]+ phi[2]*eps[t-2]
+  }
+  for(i in 1:2) {
+    m[i]~ dnorm(0, 0.0001)
+    phi[i] ~ dnorm(0, 0.0001)
+}
+  c          ~ dnorm(0, 0.0001)
+  tau       <- 1/pow(sigma, 2)
+  sigma      ~ dunif(0, 100)
+}
+",file=here("JAGS_mods","lunn11.2.1.MA.txt"))
+
+resMA2<-jags(dat1,
+          parameters.to.save=c("c","phi","sigma","m","eps"),
+          model.file=here("JAGS_mods","lunn11.2.1.MA.txt"),
+          n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+
+resMA2$BUGSoutput$summary[c("c","phi[1]","phi[2]","sigma","m[1]","m[2]"),] %>% kable(digits = 2)
+resMA2$BUGSoutput$DIC
+predma2<-cbind(data.frame(resMA2$BUGSoutput$summary[mrows,c("mean","2.5%","97.5%")]),sunspot)
+predma2$resid<-resMA2$BUGSoutput$summary[erows,"mean"]
+g1<-ggplot(predma2,aes(x=Year))+
+  geom_point(aes(y=y))+
+  geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=X2.5.,ymax=X97.5.),alpha=0.3)
+g2<-ggplot(predma2,aes(x=Year,y=resid))+
+  geom_point()+
+  geom_abline(slope=0,intercept=0)
+grid.arrange(g1,g2)
+```
+
+ARMA in JAGS
+
+```{r}
+write("model {
+  # ARMA(2,1):
+  for (t in 1:n) {
+    y[t]     ~ dnorm(m[t], tau)
+    yr[t]   <- 1769 + t
+    eps[t]  <- y[t] - m[t]
+  }
+  for (t in 3:n) {
+    m[t]    <- c + theta[1]*y[t-1] + theta[2]*y[t-2]
+                 + phi*eps[t-1]
+  }
+  for (i in 1:2) {
+    theta[i] ~ dnorm(0, 0.0001)
+    m[i] ~ dnorm(0, 0.0001)
+  }
+  phi        ~ dnorm(0, 0.0001)
+  c          ~ dnorm(0, 0.0001)
+  tau       <- 1/pow(sigma, 2)
+  sigma      ~ dunif(0, 100)
+  for (t in (n+1):(n+20)) {
+    m[t]    <- c + theta[1]*y[t-1] + theta[2]*y[t-2]
+                 + phi*eps[t-1]    
+    y[t]     ~ dnorm(m[t], tau)
+    eps[t]  <- y[t] - m[t]
+  }
+
+}
+",file=here("JAGS_mods","lunn11.2.1.bARMAproj.txt"))
+
+dat1$y<-c(dat1$y,rep(NA,20))
+
+
+resARMA<-jags(dat1,
+          parameters.to.save=c("c","phi","theta","sigma","m","eps"),
+          model.file=here("JAGS_mods","lunn11.2.1.bARMAproj.txt"),
+          n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+
+resARMA$BUGSoutput$summary[c("c","theta[1]","theta[2]","phi","sigma","m[1]","m[2]"),]%>%kable(digits=2)
+resARMA$BUGSoutput$DIC
+
+predarma<-data.frame(resARMA$BUGSoutput$summary[mrows,c("mean","2.5%","97.5%")])
+predarma<-cbind(predarma,sunspot)
+predarma$resid<-resARMA$BUGSoutput$summary[erows,"mean"]
+g1<-ggplot(predarma,aes(x=Year))+
+  geom_point(aes(y=y))+
+  geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=X2.5.,ymax=X97.5.),alpha=0.3)
+g2<-ggplot(predarma,aes(x=Year,y=resid))+
+  geom_point()+
+  geom_abline(slope=0,intercept=0)
+grid.arrange(g1,g2)
+```
+Model comparison
+
+```{r}
+data.frame(Model=c("AR1","AR2","MA2","ARMA21"),
+                   DIC=c(resAR1$BUGSoutput$DIC,
+                         resAR2$BUGSoutput$DIC,
+                         resMA2$BUGSoutput$DIC,
+                         resARMA$BUGSoutput$DIC)) %>%
+  mutate(DeltaDIC=DIC-min(DIC)) %>% kable(digits=1)
+```
+
+
+#Plot prediction
+```{r,warning=FALSE}
+mrows<-paste0("m[",1:120,"]")
+predarma<-data.frame(resARMA$BUGSoutput$summary[mrows,c("mean","2.5%","97.5%")])
+predarma<-cbind(predarma,rbind(sunspot,data.frame(Year=1870:1889,y=rep(NA,20))))
+ggplot(predarma,aes(x=Year))+
+  geom_point(aes(y=y))+geom_line(aes(y=mean))+
+  geom_ribbon(aes(ymin=X2.5.,ymax=X97.5.),alpha=0.3)
+```
+
+
+##Code from Jonson et al. 2016
+
+Make simulated track
+
+```{r}
+simTrack = function(T = 100, theta = c(0, pi), gamma = c(0.95, 0.1), 
+                    alpha = c(0.9, 0.2), Sigma = matrix(c(5,0,0,5),2,2), err){
+  require(mvtnorm)
+  start.date = strptime(format(Sys.time(), "%d/%m/%y %H:%M:%S"), "%d/%m/%y %H:%M:%S", tz = "GMT")
+  Y = X = matrix(NA, T, 2) 
+  TdX = matrix(NA, T-1, 2) 
+  X.mn = matrix(NA, T-1, 2) 
+  b = c()
+  mu = c() 
+  tau.x = c()
+  tau.y = c()
+  nu.x = c()
+  nu.y = c()
+  X[1, ] = rmvnorm(1, c(1000,1000), Sigma) #randomize starting position 
+  X[2, ] = rmvnorm(1, X[1,], Sigma)
+  b[1] = 1
+  for(i in 2:(T-1)){
+    b[i] = sample(1:2, 1, prob=c(alpha[b[i-1]],1-alpha[b[i-1]]), replace=TRUE)
+    TdX[i,1] = cos(theta[b[i]]) * (X[i,1] - X[i-1,1]) +
+      sin(theta[b[i]]) * (X[i,2] - X[i-1,2])
+    TdX[i,2] = -sin(theta[b[i]]) * (X[i,1] - X[i-1,1]) +
+      cos(theta[b[i]]) * (X[i,2] - X[i-1,2])
+    X.mn[i,] = X[i,] + TdX[i,] * gamma[b[i]]
+    X[i+1,] = rmvnorm(1, X.mn[i,], Sigma)
+  }
+  b[T] = sample(1:2, 1, prob=c(alpha[b[T-1]],1-alpha[b[T-1]]), replace=TRUE) 
+  if(err=="gps"){
+    tau.x = tau.y = 0.05# SD = 50 m
+    nu.x = nu.y = 10000	# Gaussian errors
+    
+    Y[,1] = X[,1] + tau.x * rt(T, nu.x)
+    Y[,2] = X[,2] + tau.y * rt(T, nu.y)
+    lc = rep("f", dim(X)[1])
+  }
+  else if(err=="argos"){ ## Randomly draw lc's
+    ## Use class proportions from IMOS Southern elephant seal data as ## probability vector
+    lc = factor(sample(c(3,2,1,0,"A","B"), T, replace=TRUE, prob=c(0.03,0.04,0.059,0.145,0.371,0.353)), levels=c(3,2,1,0,"A","B"),
+                ordered=TRUE)
+    ## Error scale and df's from Jonsen et al. (2005) Ecology (in km) tau.x[1] = 0.2898660
+    tau.x[2] = 0.3119293
+    tau.x[3] = 0.9020423
+    tau.x[4] = 2.1625936
+    tau.x[5] = 0.5072920
+    tau.x[6] = 4.2050261
+    tau.y[1] = 0.1220553
+    tau.y[2] = 0.2605126
+    tau.y[3] = 0.4603374
+    tau.y[4] = 1.607056
+    tau.y[5] = 0.5105468
+    tau.y[6] = 3.041276
+    nu.x[1] = 3.070609
+    nu.x[2] = 1.220822
+    nu.x[3] = 2.298819
+    nu.x[4] = 0.9136517
+    nu.x[5] = 0.786954
+    nu.x[6] = 1.079216
+    nu.y[1] = 2.075642
+    nu.y[2] = 6.314726
+    nu.y[3] = 3.896554
+    nu.y[4] = 1.010729
+    nu.y[5] = 1.057779
+    nu.y[6] = 1.331283
+    Y[,1] = X[,1] + tau.x[as.numeric(lc)] * rt(T, nu.x[as.numeric(lc)])
+    Y[,2] = X[,2] + tau.y[as.numeric(lc)] * rt(T, nu.y[as.numeric(lc)]) 
+    tau.x = tau.x[as.numeric(lc)]
+    tau.y = tau.y[as.numeric(lc)] 
+    nu.x = nu.x[as.numeric(lc)] 
+    nu.y = nu.y[as.numeric(lc)]
+  }
+  ## time interval is nominally 1 h
+  dates = seq(start.date, start.date + (T-1) * 3600, by=3600)
+  simdat = data.frame(date=dates, x=X[,1], y = X[,2], x.obs=Y[,1], y.obs=Y[,2], 
+                      lc, b, theta=theta[b], gamma=gamma[b], sigma=Sigma[1,1],
+                      tau.x, tau.y, nu.x, nu.y)
+  
+  simdat
+}
+
+simdat<-simTrack(err="argos")
+g1<-ggplot(simdat,aes(x=x,y=y,color=factor(b)))+geom_point()
+g1
+```
+
+
+
+JAGS code: non-hierarchical (SSM) switching model for simulated GPS data 
+JAGS code for DCRWS.txt model: non-hierarchical with Gaussian obs'n model 
+data block with constants and hyperparameters for state var-cov matrix 
+
+```{r}
+write("
+data { 
+pi <-3.141592653589 
+Omega[1,1] <-1 
+Omega[1,2] <-0 
+Omega[2,1] <-0 
+Omega[2,2] <-1 
+## Initial state location set equal to the first observed location 
+first.loc[1] <-y[1,1] 
+first.loc[2] <-y[1,2] } 
+## model block with priors, state process model, and observation model 
+model { ## -----------------------Prior distributions ----------------------
+## state process var-covar matrix, Sigma 
+iSigma[1:2,1:2] ~ dwish(Omega[,], 2) 
+Sigma[1:2,1:2] <-inverse(iSigma[,]) 
+## mean turn angle: theta[1] (transient), theta[2] (ARS) 
+tmp[1] ~ dbeta(10, 10) 
+tmp[2] ~ dbeta(10, 10) 
+theta[1] <-(2 * tmp[1] -1) * pi 
+theta[2] <-(tmp[2] * pi * 2) 
+## move persistence: gamma[1] (transient), gamma[2] (ARS) 
+gamma[1] ~ dbeta(5, 2) 
+gamma[2] ~ dbeta(2, 5) 
+## behavioural state switching probabilities: alpha ``matrix'' 
+alpha[1] ~ dbeta(1, 1) 
+alpha[2] ~ dbeta(1, 1) 
+## probabilities of initial behavioural state (transient or ARS) 
+lambda[1] ~ dbeta(1, 1) 
+lambda[2] <-1 -lambda[1] 
+## ----------------------------------------------------------------
+## ----------------------State Process Model ---------------------
+## randomly specify initial behavioural state, b[1] 
+b[1] ~ dcat(lambda[]) 
+## randomly specify location of first state, x[1,1:2] 
+x[1,1] ~ dnorm(first.loc[1], tau[1,1]^-2) 
+x[1,2] ~ dnorm(first.loc[2], tau[1,2]^-2) 
+## randomly specify location of second state, x[2,1:2] 
+x[2,1:2] ~ dmnorm(x[1,], iSigma[,]) 
+## Loop over the 2 to T-1 time steps 
+for(t in 2:(T-1)){ ## randomly specify the time t behavioural state, b[t] 
+ phi[t,1] <-alpha[b[t-1]] 
+ phi[t,2] <-1 -alpha[b[t-1]] b[t] ~ dcat(phi[t,]) 
+ ## randomly specify the time t+1 location state, x[t+1,1:2] 
+ x.mn[t,1] <-x[t,1] + (cos(theta[b[t]]) * (x[t,1] -x[t-1,1]) 
+   -sin(theta[b[t]]) * (x[t,2] -x[t-1,2])) * gamma[b[t]] 
+ x.mn[t,2] <-x[t,2] + (sin(theta[b[t]]) * (x[t,1] -x[t-1,1]) + 
+   cos(theta[b[t]]) * (x[t,2] -x[t-1,2])) * gamma[b[t]] 
+ x[t+1,1:2] ~ dmnorm(x.mn[t,], iSigma[,]) } 
+ ## randomly specify the last behavioural state, b[T] 
+ zeta[1] <-alpha[b[T-1]] 
+ zeta[2] <-1 -zeta[1] 
+ b[T] ~ dcat(zeta[]) 
+ ## ----------------------------------------------------------------
+ ## -----------------------Observation Model ----------------------
+for(t in 2:T){ 
+ y[t,1] ~ dnorm(x[t,1], tau[t,1]^-2) 
+ y[t,2] ~ dnorm(x[t,2], tau[t,2]^-2) } 
+}",here("JAGS_mods","DCRWS.txt"))
+
+jagsData<-list(y=as.matrix(simdat[,c("x","y")]),T=nrow(simdat),
+               tau=as.matrix(simdat[,c("tau.x","tau.y")]))
+jagsData$tau[is.na(jagsData$tau)]<-1
+summary(jagsData$tau)
+
+mod1<-jags(data=jagsData,
+           model.file=here("JAGS_mods","DCRWS.txt"),
+           parameters.to.save = c("x","b"),
+           n.chain=2,
+           n.iter=11000,
+           n.burnin=1000,
+           n.thin=1)
+head(mod1$BUGSoutput$summary)
+
+n=nrow(simdat)
+output<-data.frame(est.x=mod1$BUGSoutput$summary[paste0("x[",1:n,",1]"),"mean"],
+                   est.xl=mod1$BUGSoutput$summary[paste0("x[",1:n,",1]"),"2.5%"],
+                   est.xu=mod1$BUGSoutput$summary[paste0("x[",1:n,",1]"),"97.5%"],
+                   est.y=mod1$BUGSoutput$summary[paste0("x[",1:n,",2]"),"mean"],
+                   est.yl=mod1$BUGSoutput$summary[paste0("x[",1:n,",2]"),"2.5%"],
+                   est.yu=mod1$BUGSoutput$summary[paste0("x[",1:n,",2]"),"97.5%"],
+                   b=mod1$BUGSoutput$summary[paste0("b[",1:n,"]"),"mean"], 
+                   index=1:n)
+
+summary(output)
+g2<-ggplot(output,aes(color=b))+
+  geom_point(aes(x=est.x,y=est.y))+
+  geom_path(aes(x=est.x,y=est.y))+
+  geom_errorbar(aes(x=est.x,ymin=est.yl,ymax=est.yu))+
+  geom_errorbarh(aes(xmin=est.xl,xmax=est.xu,y=est.y))
+g2  
+grid.arrange(g1,g2)
+
+```

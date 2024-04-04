@@ -1,0 +1,28 @@
+model {
+  # ARMA(2,1):
+  for (t in 1:n) {
+    y[t]     ~ dnorm(m[t], tau)
+    yr[t]   <- 1769 + t
+    eps[t]  <- y[t] - m[t]
+  }
+  for (t in 3:n) {
+    m[t]    <- c + theta[1]*y[t-1] + theta[2]*y[t-2]
+                 + phi*eps[t-1]
+  }
+  for (i in 1:2) {
+    theta[i] ~ dnorm(0, 0.0001)
+    m[i] ~ dnorm(0, 0.0001)
+  }
+  phi        ~ dnorm(0, 0.0001)
+  c          ~ dnorm(0, 0.0001)
+  tau       <- 1/pow(sigma, 2)
+  sigma      ~ dunif(0, 100)
+  for (t in (n+1):(n+20)) {
+    m[t]    <- c + theta[1]*y[t-1] + theta[2]*y[t-2]
+                 + phi*eps[t-1]    
+    y[t]     ~ dnorm(m[t], tau)
+    eps[t]  <- y[t] - m[t]
+  }
+
+}
+

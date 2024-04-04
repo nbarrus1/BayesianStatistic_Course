@@ -1,0 +1,283 @@
+---
+title: "HW 9"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(R2jags)
+library(tidyverse)
+library(ggmcmc)
+library(gridExtra)
+library(loo)
+library(kableExtra)
+theme_set(theme_bw())
+```
+
+## 1. Croaker growth
+
+## a Plot
+
+```{r}
+croaker<-read.csv("croakerF.csv")
+
+ggplot(croaker,aes(x=Age,y=ObsL))+geom_point() 
+```
+
+It is hard to say whether normal or lorngormal is best. The residual variance seems to be different in different years with no obvious pattern. 
+
+## b Lognormal
+
+```{r}
+write("model 
+  {
+  for (i in 1:N){ 
+    PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K* (Age2 -Age1)))  # model prediction  
+    logPredL[i] <- log(PredL[i])   # log-transformation of pred.value
+    ObsL[i] ~ dlnorm(logPredL[i], tau)   # lognormal likelihood
+    logObsL[i] <-log(ObsL[i])       # log transfomration of observed value
+    resid[i] <- logObsL[i]-logPredL[i]  # residuals
+    LL[i]<- -log(1/sqrt(tau))-0.5*log(2*3.14159)-0.5*(logObsL[i]-logPredL[i])^2*tau-logObsL[i]  }
+  #priors specification
+  K ~ dunif(0,4)
+  L1 ~ dunif(10,2000)   
+  L2 ~ dunif(10,2000) 
+  tau~dgamma(0.001,0.001)
+  Age1<-1
+  Age2<-10
+  #Derived parameters
+    Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+    dev<- -2*sum(LL[])
+}
+",file="VonBertLnormSchnute.txt")
+
+dat1<-list(Age=croaker$Age,ObsL=croaker$ObsL,N=nrow(croaker))
+init1<-list(tau=1,L1=100,L2=1000,K=0.5)
+init2<-list(tau=2,L1=200,L2=500,K=0.7)
+
+res1bjags<-jags(dat1,list(init1,init2),model.file="VonBertLnormSchnute.txt",
+              parameters.to.save=c("K","L1","L2","Linf","tau","logPredL","PredL",
+                                   "resid","LL","dev"),
+              n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+
+resb<-res1bjags$BUGSoutput
+range(resb$summary[,"n.eff"])
+range(resb$summary[,"Rhat"])
+resb$summary[c("L1","L2","K","tau","Linf","dev","deviance"),] %>%
+  kable(format="html",digits=2)
+
+#PLot residuals
+n<-nrow(croaker)
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("logPredL[",1:n,"]")
+dfcheck<-data.frame(Predicted=resb$summary[meanrows,"mean"],
+                    Residual=resb$summar[residrows,"mean"])
+g1<-ggplot(dfcheck)+geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+g2<-ggplot(dfcheck,aes(sample=Residual))+geom_qq()+geom_qq_line()+
+  ggtitle("QQNormal of Residuals")
+grid.arrange(g1,g2,ncol=2)
+
+```
+
+The residuals are plotted on the log scale for the lognormal. There may be a slight deviation from normality in the qqnormal plot but the residual variance looks constant, which is good. 
+
+## c. Normal
+
+```{r}
+write("model {
+  for (i in 1:N){ 
+   PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (Age[i] -Age1)))/(1 - exp(- K*(Age2 -Age1))) 	#  model prediction  
+   ObsL[i] ~ dnorm(PredL[i], tau)  	#Normal likelihood
+   resid[i] <- ObsL[i] - PredL[i]  # residuals
+   LL[i]<- -log(1/sqrt(tau))-0.5*log(2*3.14159)-0.5*(ObsL[i]-PredL[i])^2*tau
+}
+ #priors specification
+ K ~ dunif(0,4)
+ Age1<-1
+ Age2<-10
+ L1~dunif(10,2000) 	
+ L2~dunif(10,2000) 	
+ tau~dgamma(0.001,0.001)
+ #Derived parameters
+ Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+ dev<- -2*sum(LL[])
+}",file="VonBertNormalSchnute.txt")
+
+res1cjags<-jags(dat1,list(init1,init2),model.file="VonBertNormalSchnute.txt",
+              parameters.to.save=c("K","L1","L2","Linf","tau","LL","PredL","resid","dev"),
+              n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+resc<-res1cjags$BUGSoutput
+range(resc$summary[,"n.eff"])
+range(resc$summary[,"Rhat"])
+resc$summary[c("L1","L2","K","tau","Linf","dev","deviance"),]%>%
+  kable(format="html",digits=2)
+
+#Plot residuals
+n<-nrow(croaker)
+residrows<-paste0("resid[",1:n,"]")
+meanrows<-paste0("PredL[",1:n,"]")
+dfcheck<-data.frame(Predicted=resc$summary[meanrows,"mean"],
+                    Residual=resc$summary[residrows,"mean"])
+g1<-ggplot(dfcheck)+geom_point(aes(x=Predicted,y=Residual))+
+  geom_abline(intercept=0,slope=0)+ggtitle("Residuals")
+g2<-ggplot(dfcheck,aes(sample=Residual))+
+  geom_qq()+geom_qq_line()+ggtitle("QQNormal of Residuals")
+grid.arrange(g1,g2,ncol=2)
+```
+
+The normal residuals show an increasing trend in variance, which implies that the lognormal might be better. The qqnormal plot also shows some deviation from normality. Note that the parameters (L1,L2,K) are similar between the two models, but the precision is not comparable because it is on the log scale for lognormal but not normal. 
+
+## d
+
+```{r}
+LLrow<-paste0("LL[",1:n,"]")
+LLb<-res1bjags$BUGSoutput$sims.matrix[,LLrow]
+LLc<-res1cjags$BUGSoutput$sims.matrix[,LLrow]
+waic(LLb)
+waic(LLc)
+         
+```
+
+The WAIC values are nearly identical with a deltaWAIC of `r waic(LLc)$estimate[3,1] - waic(LLb)$estimate[3,1]`
+
+## e. Ageing error
+
+```{r}
+write("model   {
+  for (i in 1:N){ 
+   AgeX[i]~dunif(1,10)
+   Age[i]~dnorm(AgeX[i],4)
+   PredL[i] <- L1 +(L2-L1)* (1 - exp(- K* (AgeX[i] -Age1)))/(1 - exp(- K* (Age2 -Age1)))  # model prediction  
+    logPredL[i] <- log(PredL[i])   # log-transformation of pred.value
+    ObsL[i] ~ dlnorm(logPredL[i], tau)   # lognormal likelihood
+    logObsL[i] <-log(ObsL[i])       # log transfomration of observed value
+    resid[i] <- logObsL[i]-logPredL[i]  # residuals
+  }  
+   #priors specification
+  K ~ dunif(0,4)
+  L1 ~ dunif(10,2000)   
+  L2 ~ dunif(10,2000) 
+  tau~dgamma(0.001,0.001)
+  Age1<-1
+  Age2<-10
+  #Derived parameters
+    Linf<- (L2-L1*exp(-K*(Age2-Age1)))/(1-exp(-K*(Age2-Age1)))
+}
+",file="VonBertLnormSchnuteAgeing.txt")
+
+init1<-list(tau=1,L1=c(100),L2=c(2000),K=c(0.5),AgeX=dat1$Age)
+init2<-list(tau=2,L1=c(200),L2=c(1000),K=c(0.3),AgeX=dat1$Age)
+
+res1ejags<-jags(dat1,list(init1,init2),model.file="VonBertLnormSchnuteAgeing.txt",
+              parameters.to.save=c("K","L1","L2","Linf","tau","AgeX","PredL"),
+              n.chains=2,n.iter=11000,n.burnin=1000,n.thin=1)
+rese<-res1ejags$BUGSoutput
+range(rese$summary[,"n.eff"])
+range(rese$summary[,"Rhat"])
+rese$summary[c("L1","L2","K","Linf","tau"),]%>%
+  kable(format="html",digits=2)
+```
+The ageing error doesn't change the parameter values very much, so it probably isn't necessary. 
+
+## Marlin ZIP and delta-lognormal
+
+```{r}
+marlin<-read.csv("marlin.csv")
+summary(marlin)
+marlin$YearNum<-marlin$Year-1994
+
+write("model  {
+  for(i in 1:5) {
+   a[i]~dnorm(0,1.0E-6)
+   alpha[i]~ dnorm(0, 1.0E-6)
+  }
+  for(i in 1:426)  {
+   logit(phi[i])<-a[YearNum[i]]
+   z[i]~dbern(phi[i])
+   log.mean[i]<-alpha[YearNum[i]] 
+   mean.pos[i]<-exp(log.mean[i])
+   mean.tot[i]<-mean.pos[i] *  z[i]
+   Count[i]~dpois(mean.tot[i])
+   resid[i]<-(Count[i]-mean.tot[i])
+  }
+  for(i in 1:5) {
+   predmean[i] <- exp(alpha[i])
+   predpos[i]<- ilogit(a[i])
+   totalpred[i]<-predmean[i] * predpos[i]
+}}
+",file="ZIP.txt")
+
+init1<-list(list(alpha=rep(1,5),z=rep(1,nrow(marlin))),
+  list(alpha=rep(2,5),z=rep(1,dim(marlin)[1])))
+
+res2a<-jags(marlin,init1,parameters.to.save = c("alpha","a","totalpred"),
+             model.file = "ZIP.txt",n.thin=4,n.iter = 110000,n.burnin = 10000,
+             n.chains = 2)
+#Show convergence
+range(res2a$BUGSoutput$summary[,"n.eff"][res2a$BUGSoutput$summary[,"n.eff"]>1])
+range(res2a$BUGSoutput$summary[,"Rhat"])
+res2a$BUGSoutput$summary[c(paste0("alpha[",1:5,"]"),paste0("a[",1:5,"]")),]%>%
+  kable(format="html",digits=2)
+ggs7.1b<-ggs(as.mcmc(res2a))
+ggs_caterpillar(ggs7.1b,family="totalpred",sort=FALSE)+coord_flip()
+```
+
+# 2b Delta lognormal
+
+```{r}
+write("model  {
+  for(i in 1:5) {
+   a[i]~ dnorm(0, 1.0E-6) 
+   alpha[i]~ dnorm(0, 1.0E-6)
+ }
+  prec~dgamma(0.01,0.001)
+  for(i in 1:N1)  {
+   logit(p[i])<-a[YearNum1[i]] 
+   present[i]~dbern(p[i])
+  }
+  for(i in 1:N2)  {
+   mean[i]<-alpha[YearNum2[i]] 
+   count[i]~dlnorm(mean[i],prec)
+  }
+   for(i in 1:5) {
+    mean.lnorm[i] <- exp(alpha[i]+1/(2*prec))
+    logit(predp[i])<-a[i]
+    total.mean[i] <-predp[i]* mean.lnorm[i]
+   }
+}",file="DeltaLognormal.txt")
+
+marlin$present<-ifelse(marlin$Count>0,1,0)
+deltadat1<-list(N1=nrow(marlin),N2=sum(marlin$present),
+             present=marlin$present,
+             count=marlin$Count[marlin$present==1],
+             YearNum1=marlin$YearNum,
+             YearNum2=marlin$YearNum[marlin$present==1])
+summary(deltadat1)
+
+init1<-list(list(prec=10,alpha=rep(0,5),a=rep(2,5)),
+  list(prec=1,a=rep(1,5),alpha=rep(1,5)))
+
+resres2b<-jags(deltadat1,inits=init1,
+  parameters.to.save = c("alpha","a","total.mean","prec"),
+             model.file = "DeltaLognormal.txt",
+              n.thin=1,n.iter = 11000,
+              n.burnin = 1000,
+             n.chains = 2)
+#Show convergence
+range(resres2b$BUGSoutput$summary[,"n.eff"][resres2b$BUGSoutput$summary[,"n.eff"]>1])
+range(resres2b$BUGSoutput$summary[,"Rhat"])
+
+# Parameter summaries
+resres2b$BUGSoutput$summary[c("prec",paste0("alpha[",1:5,"]"),paste0("a[",1:5,"]")),]%>%
+  kable(format="html",digits=2)
+
+# Estimated mean
+ggsres2b<-ggs(as.mcmc(resres2b))
+ggs_caterpillar(ggsres2b,family="total.mean",sort=FALSE)+coord_flip()
+```
+The trend looks similar to the others. 
+
+# d. Comparison
+The delta lognormal gave similar results and was much faster, but it can't be compared to the other models using information critera because of the hybrid model structure.    

@@ -345,7 +345,7 @@ round(jagsImpala$BUGSoutput$summary[c("psi","theta","N","D"),],2)
 ggsImpala<-ggs(as.mcmc(jagsImpala))
 ggs_density(filter(ggsImpala,Parameter=="theta"))
 ggsD=filter(ggsImpala,Parameter=="D")
-ggplot(ggsD,aes(x=value))+geom_histogram(binwidth=0.1)+xlab(expression(paste("Impala density (#/",m^2,")")))+theme_bw()
+ggplot(ggsD,aes(x=value))+geom_histogram(binwidth=0.1)+xlab(expression(paste("Impala density (#/",km^2,")")))+theme_bw()
 
 impala<-data.frame(y=ImpalaDat$y,x=ImpalaDat$x)
 ggplot(impala,aes(x=x))+

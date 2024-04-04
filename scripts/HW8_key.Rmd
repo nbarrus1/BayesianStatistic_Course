@@ -1,0 +1,173 @@
+---
+title: "Homework 8"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE}
+library(lme4)
+library(INLA)
+library(INLAutils)
+library(tidyverse)
+library(rstan)
+library(loo)
+library(ggmcmc)
+library(rstanarm)
+library(brms)
+library(BayesFactor)
+library(kableExtra)
+theme_set(theme_bw())
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+```
+
+## 1 Plant genotypes
+
+## a Plots
+```{r}
+Arabidopsis<-Arabidopsis %>% 
+  mutate(gen=factor(gen),
+    nutrient=factor(nutrient)
+)
+ggplot(Arabidopsis,aes(x=total.fruits))+geom_histogram()
+ggplot(Arabidopsis,aes(x=gen,color=popu,y=total.fruits))+
+  stat_summary()+
+  facet_grid(rows=vars(nutrient),cols=vars(amd))
+
+```
+
+For right skewed count data with a lot of zeroes, a negative binomial seems appropriate. It looks like nutrient has an effect, and possibly a smaller effect of amd. The population and genotype random effects do look relevant, since there seems to be some grouping. 
+
+## b. Four likelihood models
+
+# b1
+
+```{r}
+plantPoisson<-inla(total.fruits~nutrient*amd+f(gen,model="iid")+f(popu,model="iid"),
+  family="poisson",data=Arabidopsis,
+  control.compute = list(waic=TRUE,cpo=TRUE,dic=TRUE))
+summary(plantPoisson)
+```
+
+## b2
+
+```{r}
+plantNB2<-inla(total.fruits~nutrient*amd+f(gen,model="iid")+f(popu,model="iid"),
+  family="nbinomial",
+  data=Arabidopsis,
+  control.compute = list(waic=TRUE,cpo=TRUE,dic=TRUE))
+summary(plantNB2)
+```
+
+## b3
+
+```{r}
+plantZIP0<-inla(total.fruits~nutrient*amd+f(gen,model="iid")+f(popu,model="iid"),
+  family="zeroinflatedpoisson0",data=Arabidopsis,
+  control.compute = list(waic=TRUE,cpo=TRUE,dic=TRUE))
+summary(plantZIP0)
+```
+
+## b4
+
+```{r}
+plantNormal<-inla(total.fruits~nutrient*amd+f(gen,model="iid")+f(popu,model="iid"),
+  data=Arabidopsis,
+  control.compute = list(waic=TRUE,cpo=TRUE,dic=TRUE))
+summary(plantNormal)
+```
+
+## c Model comparison
+
+```{r}
+waictab1<-data.frame(Model=c("Poisson","NB2","ZIP0","Normal"),
+  waic=c(plantPoisson$waic$waic,plantNB2$waic$waic,
+    plantZIP0$waic$waic,plantNormal$waic$waic)) %>%
+    mutate(delta=waic-min(waic),
+  weight=exp(-0.5*delta)/sum(exp(-0.5*delta)))
+kable(waictab1)
+```
+The WAIC strongly prefers Negative binomial 2. This probably indicates that the data are not very zero inflated, but do have variance inflation. The variance inflation parameter for the negative binomial is around 0.5, which means the variance is larger than the mean.  The ZIP model estimated 20% extra zeros but had have very low WAIC. 
+
+## d PIT
+
+```{r}
+plantNB2<-inla(total.fruits~nutrient*amd+f(gen,model="iid")+f(popu,model="iid"),
+  family="nbinomial",
+  data=Arabidopsis,
+  control.predictor = list(compute=TRUE),
+  control.compute = list(waic=TRUE,cpo=TRUE,dic=TRUE))
+
+nb2out<-bind_cols(plantNB2$summary.fitted.values,
+  cpo=plantNB2$cpo$cpo,pit=plantNB2$cpo$pit,
+  total.fruits=Arabidopsis$total.fruits)
+head(nb2out)
+ggplot(nb2out,aes(x=mean,y=cpo))+
+  geom_point()+
+  ggtitle("CPO against fitted")
+ggplot(nb2out,aes(x=mean,y=pit))+
+  geom_point()+
+  ggtitle("PIT against fitted")+
+  geom_abline(intercept=0.5,slope=0)
+```
+
+The rows of dots in the cpo are caused by the fact that the Y variable is an integer, so that we get a a row of points for all the 0 responses, 1 responses, etc. THe fit looks fine in the PIT,wit points fairly evenly spread around 0.5.  
+
+## 2. Negative binomial 2 in rstanarm
+
+## a
+
+```{r}
+plantRstanarm<-stan_glmer(total.fruits~nutrient*amd+(1|popu)+(1|gen),
+  family="neg_binomial_2",
+  data=Arabidopsis,
+  refresh=0)
+print(plantRstanarm)
+```
+
+## b
+
+```{r}
+rstanRes<-fitted.values(plantRstanarm)
+nb2out$Stan<-rstanRes
+ggplot(nb2out,aes(x=mean,y=rstanRes))+
+  geom_point()+
+  geom_abline(intercept=0,slope=1)+
+  xlab("From INLA")+
+  xlab("From rstanarm")
+```
+
+The results seem quite similar. Differences may be due in part to somewhat different priors.
+
+## c shinystan and posterior predictive checks
+
+```{r}
+#launch_shinystan(plantRstanarm)
+pp_check(plantRstanarm)
+pp_check(plantRstanarm,plotfun = "scatter_avg")
+```
+
+The density overlay looks fairly good, but the scatterplot shows that the real data is still much more variable than the real data. There are a few more nuisance variables in the data we should probable include to get goodp predictions.
+
+## 3. Bayes factor
+
+## a
+
+```{r}
+Arabidopsis$Y<-log(Arabidopsis$total.fruits+1)
+plantBF<-anovaBF(Y~nutrient*amd,data=Arabidopsis)
+plot(plantBF)
+plantBF
+```
+
+The model with the two main effects and no interaction is best.
+
+## b
+
+```{r}
+plantBF
+plantBF/plantBF[1]
+```
+
+The model with no interactions is about 4 times better than the model with nutrients only.
