@@ -1,0 +1,27 @@
+model
+{
+
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+#  palive = prob of remaining alive (=0 if previously dead, =surv if alive)
+      palive[i,j] <- surv[j-1] * alive[i, j-1] 
+# determine whether it is alive
+      alive[i,j] ~ dbern(palive[i,j])
+# probability of resighting depends on whether it is alive
+      psight[i,j] <- resight * alive[i, j]        
+# actual resighting determined randomly
+      Y[i, j] ~ dbern(psight[i,j])
+     }
+   }
+ 
+ # Uninformative priors for survival and resighting rates
+ 
+  surv[1] ~ dunif(0, 1)  # uninformative for y1
+  surv[2] ~ dunif(0, 1)  # uninformative for y2
+  surv[3] ~ dunif(0, 1)  # uninformative for y3
+  surv[4] <-  surv[3]    # y4 unestimateable make same as y3
+  resight ~ dunif(0,1)  # resighting rate - uninformative
+}

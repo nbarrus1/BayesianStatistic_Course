@@ -1,0 +1,37 @@
+model
+{
+
+#hyper priors
+sigma.resight ~ dunif(0,1)
+p.sight ~ dunif(0,1)
+lp.sight <- log(p.sight/(1-p.sight))
+tau.resight <- 1 / (sigma.resight * sigma.resight)
+
+#individual variation in sighting
+  for(i in 1:N) {
+  eta[i] ~ dnorm(0,tau.resight)
+  logit(resight[i]) <- lp.sight + eta[i]
+  }
+
+  
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+#  palive = prob of remaining alive (=0 if previously dead, =surv if alive)
+      palive[i,j] <- surv * alive[i, j-1] 
+# determine whether it is alive
+      alive[i,j] ~ dbern(palive[i,j])
+# probability of resighting depends on whether it is alive
+      psight[i,j] <- resight[i] * alive[i, j]        
+# actual resighting determined randomly
+      Y[i, j] ~ dbern(psight[i,j])
+     }
+   }
+ 
+ # Uninformative priors for survival and resighting rates
+ 
+  surv ~ dunif(0,1)
+  
+}

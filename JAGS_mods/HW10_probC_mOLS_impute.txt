@@ -1,0 +1,28 @@
+model
+{
+  for (i in 1:N)			# for each of the data
+  {
+    Y[i] ~ dnorm(ymean[i], prec)	# assume normal distribution
+    ymean[i] <- a + b[1]*weight[i] + b[2]*masspercent[i] + b[3]*expirevolume[i] + b[4]*residvolume[i]
+   pred.obs[i]~dnorm(ymean[i],prec)   # Predicted Y value
+   resid[i]<-Y[i]-ymean[i]			# Residual 
+   sresid[i]<-(Y[i]-ymean[i])*sqrt(prec)  # Standardized residual
+   sresid2[i]<-sresid[i]*sresid[i]  # Pearson residual squared
+   rep.sresid2[i]<-(pred.obs[i]-ymean[i])*(pred.obs[i]-ymean[i])*prec
+   LL[i]<--0.5*log(2*3.14159)+0.5*log(prec)-0.5*prec*(Y[i]-ymean[i])*(Y[i]-ymean[i])
+   weight[i]~dnorm(mu.imp,prec.imp)
+  }
+  # uninformative priors
+  a ~ dnorm(0, 1.0E-6)
+  for (i in 1:npredict)
+  {
+    b[i] ~ dnorm(0, 1.0E-6)
+  }
+  prec ~ dgamma(0.001, 0.001)
+  
+  #hyperpriors
+  
+  mu.imp ~ dnorm(0,1.0E-6)
+  prec.imp ~ dgamma(0.001, 0.001)
+  }
+

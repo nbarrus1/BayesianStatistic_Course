@@ -1,0 +1,17 @@
+model  
+{
+ a~dnorm(0,1.0E-4)
+for(i in 1:npredict) {
+ b[i]~dnorm(0,1.0E-4)
+} 
+for(i in 1:N)  {
+  logit(p[i])<-a+b[1]*Year[i]+b[2]*hbf[i]
+  present[i]~dbern(p[i])
+  LL[i]<-log(present[i]*p[i]+(1-present[i])*(1-p[i]))
+  simval[i]~dbern(p[i])
+}
+for(i in 1:nyear){
+  logit(p.new[i]) <- a + b[1]*year.new[i] + b[2]*hbf.mean
+}
+}
+

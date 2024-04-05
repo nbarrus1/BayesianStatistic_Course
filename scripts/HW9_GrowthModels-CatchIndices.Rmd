@@ -1,6 +1,6 @@
 ---
 title: "HW9-GrowthModels&CatchIndices"
-author: "Beth Babcock"
+author: "Nathan Barrus"
 date: "2024-03-28"
 output: pdf_document
 ---
