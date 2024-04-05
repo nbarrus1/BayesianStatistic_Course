@@ -499,6 +499,8 @@ df2 |>
 
 #### C) Did you get a similar result to the model with complete cases only and the model with missing data filled in? Which do you suppose is more accurate?   
 
+  The trends were similar in that there wasn't a trend. The imputed y data is likely more accurate. see below.      
+
 ```{r}
 
 df2 |> 
@@ -511,7 +513,8 @@ df2 |>
   labs(y = "Probability Present")
 
 ```
-  The trends were similar in that there wasn't a trend. The imputed y data is likely more accurate.  
+    
+   
 
 ## 3) Missing X data   
 
