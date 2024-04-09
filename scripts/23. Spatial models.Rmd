@@ -1,0 +1,441 @@
+---
+title: "23. Spatial models"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r,message=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(kableExtra)
+library(INLA)
+library(INLAutils)
+library(SpatialEpi)
+library(inlabru)
+library(geoR) #for matern function
+library(here)
+theme_set(theme_bw())
+```
+
+## Spatial models. Conditional auto-regression
+
+The Scotland lip cancer example CAR
+
+```{r}
+data(Scotland)
+summary(Scotland)
+#load the map
+g <- system.file("demodata/scotland.graph", package="INLA")
+g
+scotland.matrix<-inla.graph2matrix(g)
+head(scotland.matrix)
+
+#For the CAR model
+formula <- Counts~I(X/10)+f(Region,model="besag", graph = g,
+                   hyper=list(prec=list(param=c(0.5,0.0005)) ))
+
+mod.scotland <- inla(formula,family="poisson",E=E,data=Scotland,
+                    control.compute=list(waic=TRUE,dic=TRUE))
+
+summary(mod.scotland)
+autoplot(mod.scotland)
+```
+
+For a simple random effects model
+
+```{r}
+head(Scotland)
+formulaR <- Counts~I(X/10)+f(Region,model="iid",
+                           hyper=list(prec=list(param=c(0.5,0.0005)) ))
+
+mod.scotlandR <- inla(formulaR,family="poisson",E=E,data=Scotland,
+                     control.compute=list(waic=TRUE,dic=TRUE))
+summary(mod.scotlandR)
+```
+
+Incorporating both a random effect and a CAR model, Called BYM model or convolution prior
+
+```{r}
+inla.doc("bym")
+
+formulaBYM<- Counts~I(X/10)+f(Region,model="bym",graph=g,
+                              hyper=list(prec.unstruct=list(param=c(0.5,0.0005)),
+                                         prec.spatial=list(param=c(0.5,0.0005))))
+
+mod.scotlandBYM <- inla(formulaBYM,family="poisson",E=E,data=Scotland,
+                    control.compute=list(waic=TRUE,dic=TRUE))
+summary(mod.scotlandBYM)
+```
+
+Model comparison
+
+```{r}
+modtab<-data.frame(model=c("CAR","Random","BYM"),
+                   DIC=c(mod.scotland$dic$dic,mod.scotlandR$dic$dic,mod.scotlandBYM$dic$dic),
+                   WAIC=c(mod.scotland$waic$waic,mod.scotlandR$waic$waic,mod.scotlandBYM$waic$waic))
+modtab$deltaDIC<-modtab$DIC-min(modtab$DIC)
+modtab$deltaWAIC<-modtab$WAIC-min(modtab$WAIC)
+modtab
+```
+
+Relative risk is just the fitted values, since INLA automatically includes the link, 
+but not the offset, when using E rather than offset. 
+
+```{r}
+RR<-mod.scotland$summary.fitted.values[,"mean"]
+Scotland$RR<-RR
+```
+
+Plot observed vs. expected counts and make maps
+
+```{r}
+ggplot(Scotland,aes(x=Counts,y=E*RR))+
+  geom_point()+
+  geom_abline(intercept=0,slope=1)
+
+## Make maps. 
+data(scotland)
+scotland.map<-scotland$spatial.polygon
+plot(scotland.map)
+
+#Must have same row names in the polygon file and the data frame to be able to map a variable
+row.names(Scotland)
+names(scotland.map)
+row.names(Scotland)<-names(scotland.map)
+counties<-SpatialPolygonsDataFrame(scotland.map,Scotland)
+#Map of model estimated relative risk
+redblue<-colorRampPalette(c("blue","white","red"))
+spplot(counties,zcol="RR",main="Relative Risk",col.regions=redblue(100))
+#Map of original counts
+greenblue<-colorRampPalette(c("blue","white","green"))
+spplot(counties,zcol="Counts",main="Raw counts",col.regions=greenblue(100))
+
+```
+
+CPO and PIT
+
+```{r}
+mod.scotland <- inla(formula,family="poisson",E=E,data=Scotland,
+                    control.compute=list(waic=TRUE,dic=TRUE,cpo=TRUE))
+
+Scotland$cpo<-mod.scotland$cpo$cpo
+Scotland$pit<-mod.scotland$cpo$pit
+head(Scotland)
+ggplot(Scotland,aes(x=cpo))+geom_histogram()
+counties<-SpatialPolygonsDataFrame(scotland.map,Scotland)
+spplot(counties,zcol="cpo",main="CPO",col.regions=greenblue(100))
+
+ggplot(Scotland,aes(x=pit))+geom_histogram()+ggtitle("PIT")
+spplot(counties,zcol="pit",main="PIT",col.regions=greenblue(100))
+```
+
+
+## Geostatistical models
+
+Plot Matern function
+
+```{r}
+df<-expand.grid(Distance=seq(0.1,5,.1),nu=seq(0.5,2,0.5),kappa=seq(.5,1,0.5))
+df$Correlation<-matern(df$Distance,df$nu,df$kappa)
+ggplot(df,aes(x=Distance,y=Correlation,color=factor(nu)))+
+  geom_line(lwd=1)+theme_bw()+facet_wrap(kappa~.,ncol=1)
+```
+
+This code is simplified from Blangiardo and Cameletti's book, chapter 6. See BlangiardoChapter6.r for the complete code
+
+SPDE toy data example
+```{r}
+data(SPDEtoy)
+dim(SPDEtoy)
+head(SPDEtoy)
+ggplot(SPDEtoy,aes(x=s1,y=s2,size=y))+geom_point(alpha=0.5)
+```
+
+Make meshes
+
+```{r}
+?inla.mesh.2d
+coords <- as.matrix(SPDEtoy[,1:2])
+mesh0 <- inla.mesh.2d(loc=coords, max.edge=0.1)
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh0)+
+  geom_point() 
+
+mesh1 <- inla.mesh.2d(loc=coords, max.edge=c(0.1, 0.1))
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh1)+
+  geom_point() 
+
+mesh2 <- inla.mesh.2d(loc=coords, max.edge=c(0.1, 0.2))
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh2)+
+  geom_point() 
+
+mesh3 <- inla.mesh.2d(loc=coords, max.edge=c(0.1, 0.2), offset=c(0.4,0.1))
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh3)+  
+  geom_point() 
+
+mesh4 <- inla.mesh.2d(loc=coords, max.edge=c(0.1, 0.2), offset=c(0.1,0.4))
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh4)+  
+  geom_point() 
+
+#With a spatial domain
+domain <- matrix(cbind(c(0,1,1,0.7,0), c(0,0,0.7,1,1)),ncol=2)
+mesh6 <- inla.mesh.2d(loc.domain=domain, max.edge=c(0.04, 0.2), cutoff=0.05, offset = c(0.1, 0.4))
+ggplot(SPDEtoy,aes(x=s1,y=s2))+
+  gg(mesh6)+  
+  geom_point() 
+```
+
+
+Make projection matrix, so we can map the output to the mesh
+
+```{r}
+A.est1 <- inla.spde.make.A(mesh=mesh1, loc=coords)
+dim(A.est1)
+head(A.est1)
+table(as.vector(A.est1))
+A.est6 <- inla.spde.make.A(mesh=mesh6, loc=coords)
+dim(A.est6)
+```
+
+Set up correlation structure for spde
+
+```{r}
+inla.spde.models()
+?inla.spde2.matern
+spde <- inla.spde2.matern(mesh=mesh6)
+summary(spde)
+spde$n.theta
+```
+
+Set up formula and run INLA
+Data should be a list, because it requires inputs of different lengths (data points vs. mesh vertices)
+
+```{r}
+dataList <- list(y=SPDEtoy$y, intercept=rep(1,spde$n.spde),spatial.field=1:spde$n.spde)
+summary(dataList)
+```
+
+The spatial distribution of Y is estimated at the vertices, not the data points.
+
+Suppress the default intercept with -1 and add an intercept we will set up in the data input
+
+```{r}
+formula <- y ~ -1 + intercept + f(spatial.field, model=spde)
+
+#Add A to the control.predictor list to generated fitted values at the data points
+output6 <- inla(formula,
+                data=dataList,
+                control.predictor=list(A=A.est6,compute=TRUE))
+
+round(output6$summary.fixed,3)
+round(output6$summary.hyperpar[1,],3)
+summary(output6)
+
+output6.field <- inla.spde2.result(inla=output6, name="spatial.field", 
+  spde=spde, do.transf=TRUE)
+summary(output6.field)
+
+# Summary of parameters
+inla.zmarginal(output6.field$marginals.kappa[[1]])
+inla.zmarginal(output6.field$marginals.variance.nominal[[1]])
+inla.zmarginal(output6.field$marginals.range.nominal[[1]])
+
+#Credible interval from marginal
+inla.hpdmarginal(0.95, output6.field$marginals.kappa[[1]])
+inla.hpdmarginal(0.95, output6.field$marginals.variance.nominal[[1]])
+inla.hpdmarginal(0.95, output6.field$marginals.range.nominal[[1]])
+```
+
+Use inla.stack to set up design matrix and other data inputs
+
+```{r}
+?inla.stack
+?inla.spde.make.index #Extracts necessary indices for spatial field, and other random effects
+s.index <- inla.spde.make.index(name="spatial.field", n.spde=spde$n.spde)
+summary(s.index)
+
+#data= the y data as a list
+#A = the projection matrix as a list
+#effects = list of variables to include in this model at the knots
+stack.est <- inla.stack(data=list(y=SPDEtoy$y),
+                        A=list(A.est6),
+                        effects=list(c(s.index, list(intercept=1))), 
+                        tag="est") #Estimation
+summary(stack.est)
+output6.stack <- inla(formula,
+                      data=inla.stack.data(stack.est, spde=spde),
+                      family="gaussian",
+                      control.predictor=list(A=inla.stack.A(stack.est), 
+                                             compute=TRUE))             
+
+summary(output6.stack)
+summary(output6)
+```
+
+Results with stack are identical
+
+Generate spatial predictors on a grid, rather than on the mesh
+
+```{r}
+grid.x <- 50
+grid.y <- 50
+pred.grid <- expand.grid(x = seq(0, 1, length.out = grid.x), y = seq(0, 1, length.out = grid.y))
+dim(pred.grid)
+
+A.pred6 <- inla.spde.make.A(mesh=mesh6, loc=as.matrix(pred.grid))
+dim(A.pred6)
+
+stack.pred.response <- inla.stack(data=list(y=NA), 
+                                  A=list(A.pred6),
+                                  effects=list(c(s.index, list(intercept=1))),
+                                  tag="pred.response") 
+
+join.stack <- inla.stack(stack.est, stack.pred.response)
+
+join.output <- inla(formula,
+                    data=inla.stack.data(join.stack),
+                    control.predictor=list(A=inla.stack.A(join.stack), compute=TRUE))
+```
+
+Getting predictions to plot
+
+```{r}
+pred.grid$index <- inla.stack.index(join.stack, tag="pred.response")$data
+pred.grid$mean <- join.output$summary.fitted.values[pred.grid$index,"mean"]
+pred.grid$sd <- join.output$summary.fitted.values[pred.grid$index,"sd"]
+
+ggplot(pred.grid,aes(x=x,y=y,fill=mean))+
+  geom_tile() 
+ggplot(pred.grid,aes(x=x,y=y,fill=sd))+
+  geom_tile() 
+```
+
+Gambia malaria example from B and C, chapter 6
+
+```{r}
+data(gambia)
+head(gambia)
+
+coords <-  as.matrix(gambia[,1:2])/1000 #in km
+summary(gambia)
+dim(gambia)
+
+# Create an index at the village level
+ind <- paste("x",coords[,1], "y", coords[,2], sep="")
+# Detect non duplicated villages (Have the same x and y coordinates)
+which.nodupl <- which(!duplicated(ind))
+village.index <- c(NA, length=nrow(gambia))
+village.index[1 : (which.nodupl[length(which.nodupl)]-1)] <-
+  rep(1:64,times=as.numeric(diff(which.nodupl)))
+village.index[which.nodupl[length(which.nodupl)] : nrow(gambia)] <- 65
+gambia$village.index <- village.index
+
+summary(gambia)
+```
+
+Make non-convex hull around villages
+
+```{r}
+bnd <- inla.nonconvex.hull(coords,convex=-0.1)
+gambia.mesh <- inla.mesh.2d(boundary = bnd,offset=c(30, 60), max.edge=c(20,40))
+ggplot(gambia,aes(x=x/1000,y=y/1000))+
+  gg(gambia.mesh)+  
+  geom_point() 
+```
+
+Set up spde and A matrix
+
+```{r}
+gambia.spde <- inla.spde2.matern(mesh=gambia.mesh)
+summary(gambia.spde)
+gambia.spde$n.spde
+gambia.spde$n.theta
+A.est <- inla.spde.make.A(mesh=gambia.mesh, loc=coords)
+dim(A.est)
+s.index <- inla.spde.make.index(name="spatial.field",n.spde=gambia.spde$n.spde)
+summary(s.index$spatial.field.group)
+gambia.stack.est <- inla.stack(data=list(y=gambia$pos),
+                               A=list(A.est, 1, 1, 1, 1, 1, 1),
+                               effects=
+                                 list(c(s.index, list(Intercept=1)),
+                                      list(age=gambia$age/365),
+                                      list(treated=gambia$treated),
+                                      list(netuse=gambia$netuse),
+                                      list(green=gambia$green),
+                                      list(phc=gambia$phc),
+                                      list(village.index=gambia$village.index)),
+                               tag="est")
+
+formula <- y ~ -1 + Intercept + treated + netuse + age + green + phc + 
+  f(spatial.field, model=gambia.spde) + f(village.index, model="iid")
+
+gambia.output <- inla(formula,
+                      data=inla.stack.data(gambia.stack.est, spde=gambia.spde),
+                      family="binomial",Ntrials=1,
+                      control.predictor=list(A=inla.stack.A(gambia.stack.est), compute=TRUE),
+                      control.compute=list(dic=TRUE,waic=TRUE))
+
+fixed.out <- round(gambia.output$summary.fixed[,1:5],3)
+fixed.out
+autoplot(gambia.output)
+summary(gambia.output)
+gambia.output$summary.hyperpar
+```
+
+Precision for village.index
+
+```{r}
+sigma2u_marg <- inla.tmarginal(function(x) 1/x, gambia.output$marginals.hyperpar[[3]])
+sigma2u_m1 <- inla.emarginal(function(x) x, sigma2u_marg)
+sigma2u_m2 <- inla.emarginal(function(x) x^2, sigma2u_marg)
+sigma2u_stdev <- sqrt(sigma2u_m2 - sigma2u_m1^2)
+sigma2u_quantiles <- inla.qmarginal(c(0.025, 0.5, 0.975), sigma2u_marg)
+
+
+mod.field <- inla.spde2.result(gambia.output, name="spatial.field", gambia.spde)
+summary(mod.field)
+
+inla.emarginal(function(x) exp(x)/(1+exp(x)),gambia.output$marginals.fixed[["netuse"]])
+inla.emarginal(inla.link.invlogit, gambia.output$marginals.fixed[["netuse"]])
+```
+
+Model WITHOUT the spatial effect
+
+```{r}
+gambia.stack.est.noGF <- inla.stack(data=list(y=gambia$pos),
+                                    A=list(1, 1, 1, 1, 1, 1, 1),
+                                    effects=
+                                      list(list(Intercept=rep(1,nrow(gambia))),
+                                           list(age=gambia$age/365),
+                                           list(treated=gambia$treated),
+                                           list(netuse=gambia$netuse),
+                                           list(green=gambia$green),
+                                           list(phc=gambia$phc),
+                                           list(village.index=gambia$village.index)),
+                                    tag="est")
+
+formulanoGF <- y ~ -1 + Intercept + treated + netuse + age + green + phc +
+  f(village.index,model="iid")
+
+gambia.output.noGF <- inla(formulanoGF,
+                           data=inla.stack.data(gambia.stack.est.noGF, spde=gambia.spde),
+                           family="binomial",Ntrials=1,
+                           control.predictor=list(A=inla.stack.A(gambia.stack.est.noGF), compute=TRUE),
+                           control.compute=list(dic=TRUE,waic=TRUE))
+
+
+modtab<-data.frame(Model=c("Spatial","No spatial"),
+                   DIC=c(gambia.output$dic$dic,gambia.output.noGF$dic$dic),
+                   WAIC=c(gambia.output$waic$waic,gambia.output.noGF$waic$waic))
+modtab$deltaWAIC=modtab$WAIC-min(modtab$WAIC)
+modtab$deltaDIC=modtab$DIC-min(modtab$DIC)
+modtab
+```
+

@@ -1,0 +1,310 @@
+---
+title: "Homework 10"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,message=FALSE}
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(kableExtra)
+theme_set(theme_bw())
+```
+
+## 1. Mark-recapture
+
+```{r}
+data<-read.csv("dat10.1.csv")
+summary(data)
+dat1<-list(N=27,Years=4,First=data$First,Y=data[,1:4])
+init1<-list(surv=0.9,resight=0.5)
+init2<-list(surv=0.8,resight=0.4)
+
+write("model
+{
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+      palive[i,j] <- surv * alive[i, j-1] 
+      alive[i,j] ~ dbern(palive[i,j])
+      psight[i,j] <- resight * alive[i, j]        
+      Y[i, j] ~ dbern(psight[i,j])
+    }
+}
+# Uninformative priors for survival and resighting rates
+  surv ~ dunif(0, 1)  # uninformative
+  resight ~ dunif(0,1)  # resighting rate - uninformative
+}
+",file="HW10.1a.txt")
+
+res1a<-jags(dat1,list(init1,init2),parameters.to.save=c("surv","resight"),model.file="HW10.1a.txt",
+          n.chains=2,n.iter=10000,n.burnin=1000,n.thin=1)
+round(res1a$BUGSoutput$summary,2)
+ggs1a<-ggs(as.mcmc(res1a))
+ggs_density(ggs1a)
+```
+
+Rhat is near 1, and the effective sample size is large, so convergence is not a problem. 
+
+# 1b
+
+```{r}
+write("model
+{
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+      palive[i,j] <- surv[j-1] * alive[i, j-1] # Survival is from previous year
+      alive[i,j] ~ dbern(palive[i,j])
+      psight[i,j] <- resight * alive[i, j]        
+      Y[i, j] ~ dbern(psight[i,j])
+    }
+  }
+  for(i in 1:3) { surv[i] ~ dunif(0, 1) } # uninformative
+  surv[4]<-surv[3]
+  resight~dunif(0,1)
+}
+",file="HW10.1b.txt")
+alive<-as.matrix(data[,1:4])
+alive[]<-1
+for(i in 1:27) alive[i,1:data$First[i]]<-NA
+head(alive)
+init1<-list(surv=c(0.9,.9,.9,NA),resight=0.5,alive=alive)
+init2<-list(surv=c(0.8,.8,.8,NA),resight=0.4,alive=alive)
+res1b<-jags(dat1,list(init1,init2),parameters.to.save=c("surv","resight"),model.file="HW10.1b.txt",
+           n.chains=2,n.iter=10000,n.burnin=1000,n.thin=1)
+round(res1b$BUGSoutput$summary,2)
+ggs1b<-ggs(as.mcmc(res1b))
+ggs_density(ggs1b)
+```
+
+Convergence looks fine. The survival probabilities are not very different from part a, implying they are fairly consistent between years. 
+
+## 1c
+```{r}
+write("model
+{
+  for (i in 1:N)  # for each bird
+  {
+    alive[i, First[i]] <- 1  # 1 means it is alive the first time it was seen
+    for (j in (First[i]+1):Years)  # for each year after the first
+    {
+      palive[i,j] <- surv[j-1] * alive[i, j-1] 
+      alive[i,j] ~ dbern(palive[i,j])
+      psight[i,j] <- resight[i] * alive[i, j]        
+      Y[i, j] ~ dbern(psight[i,j])
+    }
+}
+# Uninformative priors for survival and resighting rates
+  for(i in 1:3) { surv[i] ~ dunif(0, 1) } # uninformative
+  surv[4]<-surv[3]
+  mu~dnorm(0,0.00001)
+  tau~dgamma(0.01,0.01)
+  for(i in 1:N) { 
+   lresight[i]~dnorm(mu,tau)
+   logit(resight[i])<-lresight[i]
+#   resight[i]<-exp(lresight[i])/(1+exp(lresight[i]))
+  }
+}",file="HW10.1c.txt")
+init1<-list(surv=c(0.9,.9,.9,NA),tau=1,alive=alive)
+init2<-list(surv=c(0.8,.8,.8,NA),tau=0.4,alive=alive)
+res1c<-jags(dat1,list(init1,init2),parameters.to.save=c("surv","resight","mu","tau"),model.file="HW10.1c.txt",
+           n.chains=2,n.iter=10000,n.burnin=1000,n.thin=1)
+
+round(res1c$BUGSoutput$summary,2)
+ggs10.1<-ggs(as.mcmc(res1c))
+ggs_caterpillar(ggs10.1,family="resight")
+```
+
+There isn't much variation between individuals in resighting probability, so this component of the model may not be needed. Note, I didn't specify whether survival should vary between years, so its fine if you had only one survival parameter. 
+
+## d
+
+```{r}
+data.frame(Model=c("A","B","C"),
+  DIC=c(res1a$BUGSoutput$DIC,
+   res1b$BUGSoutput$DIC,
+   res1c$BUGSoutput$DIC)) %>%
+  mutate(delta=DIC-min(DIC))%>% kable(digits=2)
+```
+
+DIC prefers the model in part b, where survival varies by year, but detection probability does not vary by individual. 
+
+## 2. Missing data
+
+```{r}
+swoPres<-read.csv("swoPres.csv")
+summary(swoPres)
+```
+
+## a. Complete cases
+
+```{r}
+
+write("model{
+  a~dnorm(0,1.0E-16)
+  b1~dnorm(0,1.0E-16)
+  b2~dnorm(0,1.0E-16)
+  for(i in 1:N) {
+    logit(p[i])<-a+b1*Year[i]+b2*hbf[i]
+    Presence[i]~dbern(p[i])
+  }
+  for(i in 1:26) {
+    logit(yearpred[i])<-a+b1*i+b2*mean(hbf[])
+  }
+}",file="logisticRegression.txt")
+
+swoComplete<-na.omit(swoPres)
+summary(swoComplete)
+presdat<-list(Year=swoComplete$Year,Presence=swoComplete$Presence,
+  hbf=swoComplete$hbf,
+  N=nrow(swoComplete))
+summary(presdat)
+res10.2a<-jags(presdat,
+  model.file="logisticRegression.txt",
+  parameters.to.save=c("a","b1","b2","yearpred"),
+  n.chain=2,n.iter=21000,n.thin=1,n.burnin=1000
+  )
+range(res10.2a$BUGSoutput$summary[,"n.eff"])
+range(res10.2a$BUGSoutput$summary[,"Rhat"])
+```
+
+# i. Summary statistics for intercept and slopes
+
+```{r}
+round(res10.2a$BUGSoutput$summary[c("a","b1","b2"),],3)
+```
+
+# ii. Year effect 
+
+```{r}
+ggs2a<-ggs(as.mcmc(res10.2a))
+ggs_caterpillar(ggs2a,family="yearpred",sort=FALSE) +coord_flip()
+```
+
+## b. with missing y
+
+No need to change the code, just use the data that includes the NA values
+
+```{r}
+presdat2<-list(Year=swoPres$Year,Presence=swoPres$Presence,hbf=swoPres$hbf,N=nrow(swoPres))
+summary(presdat2)
+str(presdat2)
+res10.2b<-jags(presdat2,
+  model.file="logisticRegression.txt",
+  parameters.to.save=c("a","b1","b2","yearpred"),
+  n.chain=2,n.iter=21000,n.thin=1,n.burnin=1000
+  )
+range(res10.2b$BUGSoutput$summary[,"n.eff"])
+range(res10.2b$BUGSoutput$summary[,"Rhat"])
+```
+
+# i. Summary statistics for intercept and slope
+
+```{r}
+round(res10.2b$BUGSoutput$summary[c("a","b1","b2"),],3)
+```
+
+# ii. Year effect 
+
+```{r}
+ggs2b<-ggs(as.mcmc(res10.2b))
+ggs_caterpillar(ggs2b,family="yearpred",sort=FALSE)+coord_flip()
+```
+
+## c. 
+
+The results are very similar, so in this case, the missing data filling doesn't seem to make much of a difference. This is a little surprising, since I specifically put in the NAs when when the swordfish were more abundant.  
+
+## 3 Missing  X data
+
+```{r}
+# library(ISwR)
+# temp<-cystfibr %>%
+#   select(pemax, weight,masspercent=bmp,expirevolume=fev1,residvolume=rv) 
+# #%>%
+# #  mutate(across(weight:residvolume,~(.x-mean(.x))/sd(.x)))
+# temp$weight[c(2,3,4,16,18,20,15)]<-NA
+# write.csv(temp,file="pemax.csv",row.names = FALSE)
+pemax<-read.csv("pemax.csv")
+summary(pemax)
+```
+
+## a
+
+```{r}
+write("model{
+  for(i in 1:5) {
+    b[i]~dnorm(0,1.0E-6)
+  }
+  prec~dgamma(0.01,0.001)
+  for(i in 1:N) {
+   mu[i]<-b[1]+b[2]*weight[i]+b[3]*masspercent[i]+b[4]*expirevolume[i]+b[5]*residvolume[i]
+   pemax[i]~dnorm(mu[i],prec)
+  }
+}
+",file="regression.txt")
+
+pemax.complete<-na.omit(pemax)
+pemax.complete<-c(N=nrow(pemax.complete),as.list(pemax.complete))
+
+mod10.3a<-jags(pemax.complete,
+               parameters.to.save = c("b","prec","mu"),
+               model.file = "regression.txt",
+               n.iter = 10000,n.burnin = 1000)
+round(mod10.3a$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","prec"),],3) 
+mod103a<-ggs(as.mcmc(mod10.3a))
+ggs_caterpillar(filter(mod103a,Parameter %in% c("b[2]","b[3]","b[4]","b[5]")),sort = FALSE)
+```
+
+## b
+
+```{r}
+write("model{
+  for(i in 1:5) {
+    b[i]~dnorm(0,1.0E-6)
+  }
+  meanwt~dnorm(0,0.001)
+  prec~dgamma(0.01,0.001)
+  precwt~dgamma(0.01,0.001)
+  for(i in 1:N) {
+   weight[i]~dnorm(meanwt,precwt)
+   mu[i]<-b[1]+b[2]*weight[i]+b[3]*masspercent[i]+b[4]*expirevolume[i]+b[5]*residvolume[i]
+   pemax[i]~dnorm(mu[i],prec)
+  }
+}
+",file="regression2.txt")
+
+pemax.list<-c(N=nrow(pemax),as.list(pemax))
+
+mod10.3b<-jags(pemax.list,
+               parameters.to.save = c("b","prec","mu","residvolume","meanwt","precwt"),
+               model.file = "regression2.txt",
+               n.iter = 10000,n.burnin = 1000)
+
+round(mod10.3b$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","prec"),],3) 
+
+round(mod10.3a$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","prec"),],3) 
+
+round(mod10.3b$BUGSoutput$summary[c("b[1]","b[2]","b[3]","b[4]","b[5]","prec","precwt","meanwt"),],3) 
+mod103b<-ggs(as.mcmc(mod10.3b))
+ggs_caterpillar(filter(mod103b,Parameter %in% c("b[2]","b[3]","b[4]","b[5]")),sort = FALSE)
+
+
+allcoef<-bind_rows(list(complete=filter(mod103b,Parameter %in% c("b[2]","b[3]","b[4]","b[5]")),                        impute=filter(mod103a,Parameter %in% c("b[1]","b[2]","b[3]","b[4]","b[5]"))),.id="method") %>%
+  group_by(Parameter,method)%>%
+  summarize(ymin=quantile(value,0.025),
+            ymax=quantile(value,0.975),
+            ymean=mean(value))
+
+ggplot(allcoef,aes(x=Parameter,y=ymean,ymin=ymin,ymax=ymax,color=method))+
+  geom_point(position=position_dodge(width=0.1))+
+  geom_errorbar(width=0.1,position=position_dodge(width=0.1))
+```
+The effects of each regression variable were simiolar but not identical. The credible intervals of the parameters are also not very different. 
