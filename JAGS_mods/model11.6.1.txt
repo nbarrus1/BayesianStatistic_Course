@@ -1,0 +1,19 @@
+model {
+  for (i in 1:N) {
+    y[i]     ~ dnorm(mu[i], tau)
+    mu[i]   <- lambda[T[i]]
+    T[i]     ~ dcat(p[])
+  }
+  p[1:2]     ~ ddirch(alpha[])
+  alpha[1]  <- 1
+  alpha[2]  <- 1
+  theta      ~ dunif(0, 1000)
+  lambda[2] <- lambda[1] + theta
+  lambda[1]  ~ dunif(-1000, 1000)
+  sigma      ~ dunif(0, 100)
+  tau       <- 1 / pow(sigma, 2)
+ 
+ # generate a prediction from this model
+  T.pred     ~ dcat(p[])	
+  y.pred     ~ dnorm(lambda[T.pred], tau)
+}

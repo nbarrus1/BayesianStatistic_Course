@@ -1,0 +1,36 @@
+# Nuisance parameter applies to first species only. 
+model {
+ #Priors
+    beta[1]<-0  #Species effect
+    for(k in 2:K) {  beta[k]~dnorm(0,1.0E-6)  }
+    tau1~dgamma(0.001,0.001)  #Random effects
+    tau2~dgamma(0.001,0.001)
+    for(i in 1:n1) { gamma[i,1]<-0 }
+    for(i in 1:n2) { delta[i,1]<-0 }
+    for(k in 2:K) { #Loop over species k
+     for(i in 1:n1) { gamma[i,k]~dnorm(0,tau1) }
+     for(i in 1:n2) { delta[i,k]~dnorm(0,tau2) }
+    }
+  for(i in 1:N) {   lambda[i]~dunif(-1000,1000) }
+# Poisson multinomial likelihood
+  for(i in 1:N)  {   #Loop over samples
+  for (k in 1 : K) {     # loop over species
+   Y[i, k] ~ dpois(mu[i,k])
+   log(mu[i, k]) <- beta[k]+gamma[x1[i],k]+delta[x2[i],k]+lambda[i]
+   p[i,k]<-mu[i,k]/sum(mu[i,])
+ }}  
+ for(k in 2:K) {
+     gamma.new[k]~dnorm(0,tau1)
+     delta.new[k]~dnorm(0,tau2)
+}
+ gamma.new[1]<-0
+ delta.new[1]<-0
+ for(k in 1:K) {
+     new.mu[k]<-exp(beta[k]+gamma.new[k]+delta.new[k])
+     Ppred[k]<-new.mu[k]/sum(new.mu[])
+     fixed.mu[k]<-exp(beta[k])
+     Pfix[k]<-fixed.mu[k]/sum(fixed.mu[])		
+ }  
+}
+
+

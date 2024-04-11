@@ -1,0 +1,478 @@
+---
+title: "24. Ecological models"
+author: "Beth Babcock"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## sdmTMB for spatial and spatiotemporal models
+
+```{r,message=FALSE}
+library(sdmTMB)
+library(tidyverse)
+library(R2jags)
+library(ggmcmc)
+library(gridExtra)
+library(here)
+theme_set(theme_bw())
+ilogit<-function(x) 1/(1+exp(-x))
+```
+
+This is the Pacific cod example from here
+https://pbs-assess.github.io/sdmTMB/articles/basic-intro.html
+
+Make mesh 
+```{r}
+mesh <- make_mesh(pcod, c("X", "Y"), cutoff = 10)
+plot(mesh)
+```
+
+Run model with matern correlation and check diagnostics
+
+```{r}
+cod1 <- sdmTMB(
+  data = pcod,
+  formula = present ~ depth_scaled + depth_scaled2,
+  mesh = mesh,
+  family = binomial(link = "logit"),
+  spatial = "on"
+)
+sanity(cod1)
+tidy(cod1, conf.int = TRUE)
+tidy(cod1, "ran_pars", conf.int = TRUE)
+pcod$residual<-residuals(cod1)
+ggplot(pcod, aes(X, Y, col = residual)) +
+  scale_colour_gradient2() +
+  geom_point() 
+?residuals.sdmTMB
+```
+
+Make predictions on a new grid and plot
+
+```{r}
+predictions <- predict(cod1, newdata = qcs_grid)
+plot_map <- function(dat, column) {
+  ggplot(dat, aes(X, Y, fill = {{ column }})) +
+    geom_raster() +
+    coord_fixed()
+}
+g1<-plot_map(predictions, ilogit(est)) +
+  scale_fill_viridis_c(na.value = "yellow", 
+                       limits = c(0, quantile(ilogit(predictions$est), 0.995))) +
+  theme(legend.position="bottom")+
+   ggtitle("Prediction (fixed effects + all random effects)")
+g2<-plot_map(predictions, ilogit(est_non_rf)) +
+  scale_fill_viridis_c()+theme(legend.position="bottom") +
+  ggtitle("Prediction (fixed effects only)")
+g3<- plot_map(predictions, omega_s) +
+  scale_fill_gradient2() +
+  theme(legend.position="bottom")+
+  ggtitle("Spatial random effects only")
+grid.arrange(g1,g2,g3,ncol=3)
+```
+
+Add temporal effect, where year is random effect
+
+```{r}
+cod2 <- sdmTMB(
+  data = pcod,
+  formula = present ~ depth_scaled + depth_scaled2,
+  mesh = mesh,
+  family = binomial(link = "logit"),
+  spatial = "on",
+  time = "year",
+  spatiotemporal = "IID"
+)
+sanity(cod2)
+tidy(cod2, conf.int = TRUE)
+tidy(cod2, "ran_pars", conf.int = TRUE)
+qcs_grid2<-NULL
+for(i in 1:length(unique(pcod$year))) qcs_grid2<-bind_rows(qcs_grid2,qcs_grid)
+qcs_grid2$year<-rep(unique(pcod$year),each=nrow(qcs_grid))
+predictions <- predict(cod2, newdata = qcs_grid2)
+plot_map(predictions, ilogit(est)) +
+  scale_fill_viridis_c(
+    # trim extreme high values to make spatial variation more visible
+    na.value = "yellow", limits = c(0, quantile(ilogit(predictions$est), 0.995))) +
+  facet_wrap(~year) +
+  ggtitle("Prediction (fixed effects + all random effects)")
+
+```
+## Multivariate models
+## Multinomial with no predictors koala. 
+
+```{r}
+
+write("model{
+  Y[1:9] ~ dmulti(p[1:9], N)     # N is equal to sum(Y[])
+  # number of koalas in each tooth wear class drawn from a multinomial distribution
+  p[1:9] ~ ddirch(alpha[])
+  # uninformative prior for proportions (p[]) if all values of alpha are equal to one
+}
+",file=here("JAGS_mods","koalaMulti.txt"))
+koala<-list(N=397, Y=c(55, 132, 88, 48, 31, 26, 14, 3, 0), alpha=c(1, 1, 1, 1, 1, 1, 1, 1, 1))
+init1<-list(list(p=rep(1/9,9)),list(p=rep(1/9,9)))
+koalaRes1<-jags(koala,init1,parameters.to.save = c("p"),
+          model.file=here("JAGS_mods","koalaMulti.txt"),n.chains = 2,n.iter = 10000,n.burnin = 1000)
+round(koalaRes1$BUGSoutput$summary,2)
+```
+
+Same in Poisson multinomial format
+
+```{r}
+write("model{
+  alpha[1]<-0
+  for(i in 2:9) {alpha[i]~dnorm(0,1.0E-6)}
+  lambda~dunif(-1000,1000) #sample size parameter
+  for(i in 1:9) {
+    log(mu[i])<-lambda+alpha[i]
+    Y[i]~dpois(mu[i])
+    p[i]<-mu[i]/sum(mu[])
+  }
+}
+",file=here("JAGS_mods","koalaPoissonMulti.txt"))
+init1<-list(list(lambda=1,alpha=c(NA,3,4,3,1,1,.1,.1,-1)),
+            list(lambda=2,alpha=c(NA,3,4,3,1,1,.1,.1,-3)))
+koala2<-list(Y=c(55, 132, 88, 48, 31, 26, 14, 3, 0))
+koalaRes2<-jags(koala2,init1,parameters.to.save = c("p","alpha","lambda","mu"),
+               model.file=here("JAGS_mods","koalaPoissonMulti.txt"),n.chains = 2,n.iter = 10000,n.burnin = 1000)
+round(koalaRes2$BUGSoutput$summary,3)
+```
+
+## Simulated fin data and poisson multinomial regression for Field et al. example
+
+Simulated data with 2 random effects, like Hong Kong fin data  
+
+```{r}
+p=c(0.35,0.25,0.2,0.1,0.1)  # True average proportion of each species
+n=rpois(20,1000)      # Sample size
+x1=rep(1:5,4)     # First predictor 
+x2=rep(1:4,each=5)   # 2nd predicotr
+lp=log(p/(1-p)) #Logit scale average proportion
+
+# Random effects are generated for each level of each factor, for each species
+x1.eff=matrix(rnorm(25,0,.01),5,5)
+x2.eff=matrix(rnorm(25,0,.01),5,5)
+pmat=matrix(0,20,5)  
+lpmat=matrix(0,20,5)  #Logit of proportion of each species in each sample
+for(i in 1:20) 
+  for(j in 1:5) {
+    lpmat[i,j]=rnorm(1,lp[j]+x1.eff[x1[i],j]+x2.eff[x2[i],j],.05)  #additive predictors
+  }
+pmat=exp(lpmat)/(1+exp(lpmat)) # Convert logit to probabilities and adjust to sum to 1
+sum(pmat)
+pmat=round(pmat,3)
+sum(pmat)
+for(i in 1:20) pmat[i,5]=1-sum(pmat[i,1:4])
+summary(as.vector(pmat))   # Make sure all probabilites are positive. 
+Y=pmat  # Use multinomial to generate counts
+for(i in 1:20)
+  Y[i,]=rmultinom(1,n[i],pmat[i,])
+Y
+
+## Make input data for jags models
+dat.ran=list(Y=Y,N=dim(Y)[1],K=5,x1=x1,x2=x2,n1=max(x1),n2=max(x2))
+write("# Nuisance parameter applies to first species only. 
+model {
+ #Priors
+    beta[1]<-0  #Species effect
+    for(k in 2:K) {  beta[k]~dnorm(0,1.0E-6)  }
+    tau1~dgamma(0.001,0.001)  #Random effects
+    tau2~dgamma(0.001,0.001)
+    for(i in 1:n1) { gamma[i,1]<-0 }
+    for(i in 1:n2) { delta[i,1]<-0 }
+    for(k in 2:K) { #Loop over species k
+     for(i in 1:n1) { gamma[i,k]~dnorm(0,tau1) }
+     for(i in 1:n2) { delta[i,k]~dnorm(0,tau2) }
+    }
+  for(i in 1:N) {   lambda[i]~dunif(-1000,1000) }
+# Poisson multinomial likelihood
+  for(i in 1:N)  {   #Loop over samples
+  for (k in 1 : K) {     # loop over species
+   Y[i, k] ~ dpois(mu[i,k])
+   log(mu[i, k]) <- beta[k]+gamma[x1[i],k]+delta[x2[i],k]+lambda[i]
+   p[i,k]<-mu[i,k]/sum(mu[i,])
+ }}  
+ for(k in 2:K) {
+     gamma.new[k]~dnorm(0,tau1)
+     delta.new[k]~dnorm(0,tau2)
+}
+ gamma.new[1]<-0
+ delta.new[1]<-0
+ for(k in 1:K) {
+     new.mu[k]<-exp(beta[k]+gamma.new[k]+delta.new[k])
+     Ppred[k]<-new.mu[k]/sum(new.mu[])
+     fixed.mu[k]<-exp(beta[k])
+     Pfix[k]<-fixed.mu[k]/sum(fixed.mu[])		
+ }  
+}
+
+",file=here("JAGS_mods","finsPoissonNoInterceptContrast.txt"))
+init1=list(beta=c(NA,0.1,0.1,0.1,0.1),tau1=1,tau2=1)
+init2=list(beta=c(NA,0,0,0,0),tau1=2,tau2=2)
+
+# Jags model using Poisson-multinomial
+res.ran1<-jags(dat.ran,list(init1,init2),parameters.to.save=c("p","beta","gamma","Pfix","Ppred","tau1","tau2","new.mu","fixed.mu","lambda"),
+             model.file=here("JAGS_mods","finsPoissonNoInterceptContrast.txt"),n.iter=10000,n.thin=1,n.burnin=1000,
+             n.chains=2)
+
+## Make graph of predicted proportions
+res<-res.ran1$BUGSoutput
+p.row<-paste("p[",c(rep(1:20,5)),",",rep(1:5,each=20),"]",sep="")
+p.res<-data.frame(res$summary[p.row,])
+p.res$p.true<-as.vector(pmat)
+p.fix<-data.frame(res$summary[paste0("Pfix[",1:5,"]"),])
+p.fix$p.true<-p
+ggplot(p.res,aes(x=p.true,y=mean))+geom_point()+geom_abline()+ 
+  geom_errorbar(aes(ymin=X2.5.,ymax=X97.5.),width=0.01)+
+  geom_errorbar(data=p.fix,aes(x=p.true,y=mean,ymin=X2.5.,ymax=X97.5.),col="red",lwd=2,width=0.01)+
+  xlab("True proportion")  +ylab("Estimated proportion")
+```
+
+
+## Correlation from Box 5.11 in McCarthy
+
+```{r}
+write("model
+{
+  mean[1] ~ dnorm(0.0, 1.0E-6)
+  mean[2] ~ dnorm(0.0, 1.0E-6)
+
+  sd[1] ~ dunif(0, 100)
+  sd[2] ~ dunif(0, 100)
+  correl ~ dunif(-1, 1)
+
+  covar[1,1] <- sd[1]*sd[1]
+  covar[2,2] <- sd[2]*sd[2]
+  covar[1,2] <- correl*sd[1]*sd[2]
+  covar[2,1] <- correl*sd[1]*sd[2]
+
+  omega[1 : 2 , 1 : 2]  <- inverse(covar[ , ])
+
+  for (i in 1:N)
+  {
+    Y[i, 1:2] ~ dmnorm(mean[], omega[ , ])
+  }
+}
+",file=here("JAGS_mods","box5.11.txt"))
+
+
+dat1<-list(N=8, Y=matrix(c(2.15, 39, 2.27, 38, 4.31, 61, 2.58, 79, 3.23, 35, 1.83, 39, 1.54, 45, 2.00, 28),8,2,byrow=TRUE))
+dat1$Y
+
+inits<-list(list(mean = c(2, 2), sd = c(.1, .1), correl = 0.2),list(mean = c(1, 1), sd = c(1, 1), correl = 0))
+
+rescor<-jags(dat1,inits,parameters.to.save = c("mean","sd","correl","covar"),
+  model.file=here("JAGS_mods","box5.11.txt"), n.chains = 2,n.iter = 100000,n.thin=10,n.burnin = 10000)
+round(rescor$BUGSoutput$summary,2)
+```
+
+## Jaws example from Lunn. Multivariate normal. 
+
+```{r}
+write("  model {
+    for (i in 1:20) {Y[i, 1:4] ~ dmnorm(mu[], Sigma.inv[,])}
+    for (j in 1:4)  {mu[j]    <- alpha + beta*x[j]}
+    alpha                      ~ dnorm(0, 0.0001)
+    beta                       ~ dnorm(0, 0.0001)
+    Sigma.inv[1:4, 1:4]        ~ dwish(R[,], 4)
+    Sigma[1:4, 1:4]           <- inverse(Sigma.inv[,])
+  }
+",file=here("JAGS_mods","model6.4.1.txt"))
+
+#Data converted from original bugs format
+dat=list(Y = structure(
+           .Data = c(47.8, 48.8, 49.0, 49.7,
+                     46.4, 47.3, 47.7, 48.4,
+                     46.3, 46.8, 47.8, 48.5,
+                     45.1, 45.3, 46.1, 47.2,
+                     47.6, 48.5, 48.9, 49.3,
+                     52.5, 53.2, 53.3, 53.7,
+                     51.2, 53.0, 54.3, 54.5,
+                     49.8, 50.0, 50.3, 52.7,
+                     48.1, 50.8, 52.3, 54.4,
+                     45.0, 47.0, 47.3, 48.3,
+                     51.2, 51.4, 51.6, 51.9,
+                     48.5, 49.2, 53.0, 55.5,
+                     52.1, 52.8, 53.7, 55.0,
+                     48.2, 48.9, 49.3, 49.8,
+                     49.6, 50.4, 51.2, 51.8,
+                     50.7, 51.7, 52.7, 53.3,
+                     47.2, 47.7, 48.4, 49.5,
+                     53.3, 54.6, 55.1, 55.3,
+                     46.2, 47.5, 48.1, 48.4,
+                     46.3, 47.6, 51.3, 51.8),
+           .Dim =  c(4, 20)),
+       x = c(8.0, 8.5, 9.0, 9.5),
+       R = structure(
+           .Data = c(4, 0, 0, 0,
+                     0, 4, 0, 0,
+                     0, 0, 4, 0,
+                     0, 0, 0, 4),
+           .Dim =  c(4, 4)))
+dat$Y=t(dat$Y)  #Note to convert from bugs to R, reverse the dimensions then transpose
+names(dat)
+dat$R
+dat$Y
+dat$x
+inits=list(list(alpha=20,beta=0),list(alpha=30,beta=1))
+
+res1<-jags(dat,inits,parameters.to.save = c("alpha","beta","mu","Sigma"),
+  model.file = here("JAGS_mods","model6.4.1.txt"),n.chains = 2,n.iter = 10000,n.burnin = 1000)
+
+round(res1$BUGSoutput$summary,2)
+sigmat<-matrix(res1$BUGSoutput$summary[1:16,"mean"],4,4)
+round(sigmat,2)
+
+#Old R plotting because of the matrix format
+matplot(dat$x,t(dat$Y),type="p",pch=1,col=1,xlab="Age",ylab="Jaw length",bty="n")
+matlines(dat$x,res1$BUGSoutput$summary[paste0("mu[",1:4,"]"),c("2.5%","50%","97.5%")],lty=c(2,1,2),col=1)
+for(i in 1:20) lines(dat$x,dat$Y[i,],col=i)
+```
+
+## Ramirez et al. turtle meta-analysis
+
+See model10E.r
+
+## Run example data in siber to estimate ellipses.  
+See examples in https://cran.r-project.org/web/packages/SIBER/vignettes/Introduction-to-SIBER.html
+
+```{r}
+library(SIBER)
+
+data("demo.siber.data")
+siber.example <- createSiberObject(demo.siber.data)
+summary(siber.example$original.data)
+community.hulls.args <- list(col = 1, lty = 1, lwd = 1)
+group.ellipses.args  <- list(n = 100, p.interval = 0.95, lty = 1, lwd = 2)
+group.hull.args      <- list(lty = 2, col = "grey20")
+
+par(mfrow=c(1,1))
+plotSiberObject(siber.example,
+                ax.pad = 2, 
+                hulls = F, community.hulls.args, 
+                ellipses = T, group.ellipses.args,
+                group.hulls = T, group.hull.args,
+                bty = "L",
+                iso.order = c(1,2),
+                xlab = expression({delta}^13*C~'\u2030'),
+                ylab = expression({delta}^15*N~'\u2030')
+)
+
+
+group.ML <- groupMetricsML(siber.example)
+print(group.ML)
+```
+
+Run Bayesian model
+
+```{r}
+parms <- list()
+parms$n.iter <- 2 * 10^4   # number of iterations to run the model for
+parms$n.burnin <- 1 * 10^3 # discard the first set of values
+parms$n.thin <- 10     # thin the posterior by this many
+parms$n.chains <- 2        # run this many chains
+
+# define the priors
+priors <- list()
+priors$R <- 1 * diag(2)
+priors$k <- 2
+priors$tau.mu <- 1.0E-3
+
+?siberMVN
+ellipses.posterior <- siberMVN(siber.example, parms, priors)
+summary(ellipses.posterior[[1]])
+SEA.B <- siberEllipses(ellipses.posterior)
+
+siberDensityPlot(SEA.B, xticklabels = colnames(group.ML), 
+                 xlab = c("Community | Group"),
+                 ylab = expression("Standard Ellipse Area " ('\u2030' ^2) ),
+                 bty = "L",
+                 las = 1,
+                 main = "SIBER ellipses on each group"
+)
+```
+
+## Normal mixture model eyes from Lunn 11.6.1
+
+```{r}
+write("model {
+  for (i in 1:N) {
+    y[i]     ~ dnorm(mu[i], tau)
+    mu[i]   <- lambda[T[i]]
+    T[i]     ~ dcat(p[])
+  }
+  p[1:2]     ~ ddirch(alpha[])
+  alpha[1]  <- 1
+  alpha[2]  <- 1
+  theta      ~ dunif(0, 1000)
+  lambda[2] <- lambda[1] + theta
+  lambda[1]  ~ dunif(-1000, 1000)
+  sigma      ~ dunif(0, 100)
+  tau       <- 1 / pow(sigma, 2)
+ 
+ # generate a prediction from this model
+  T.pred     ~ dcat(p[])	
+  y.pred     ~ dnorm(lambda[T.pred], tau)
+}",here("JAGS_mods","model11.6.1.txt"))
+
+dat4=list(y = c(529.0, 530.0, 532.0, 533.1, 533.4, 533.6, 533.7, 534.1, 534.8, 535.3,
+                535.4, 535.9, 536.1, 536.3, 536.4, 536.6, 537.0, 537.4, 537.5, 538.3,
+                538.5, 538.6, 539.4, 539.6, 540.4, 540.8, 542.0, 542.8, 543.0, 543.5,
+                543.8, 543.9, 545.3, 546.2, 548.8, 548.7, 548.9, 549.0, 549.4, 549.9,
+                550.6, 551.2, 551.4, 551.5, 551.6, 552.8, 552.9,553.2), N = 48,
+          T = c(1, NA, NA, NA, NA, NA, NA, NA, NA, NA,
+                NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,			
+                NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,
+                NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,
+                NA, NA, NA, NA, NA, NA, NA, 2))
+
+inits4=list(list(lambda = c(535, NA), theta = 5, sigma = 10),
+            list(lambda = c(435, NA), theta = 3, sigma = 5))
+
+
+res4=jags(dat4,inits4,parameters.to.save=c("lambda","theta","T.pred","y.pred"),
+          model.file=here("JAGS_mods","model11.6.1.txt"),n.iter=100000,n.thin=1,n.burnin=10000,
+          n.chains=2)
+round(res4$BUGSoutput$summary,2)
+plot(density(res4$BUGSoutput$sims.matrix[,"y.pred"]),main="Mixed distribution",lwd=2,col="red",xlab="Eye wavelength")
+```
+
+## SIMMR intro https://cran.r-project.org/web/packages/simmr/vignettes/simmr.html
+
+```{r}
+library(simmr)
+mix <- matrix(c(
+  -10.13, -10.72, -11.39, -11.18, -10.81, -10.7, -10.54,
+  -10.48, -9.93, -9.37, 11.59, 11.01, 10.59, 10.97, 11.52, 11.89,
+  11.73, 10.89, 11.05, 12.3
+), ncol = 2, nrow = 10)
+colnames(mix) <- c("d13C", "d15N")
+s_names <- c("Zostera", "Grass", "U.lactuca", "Enteromorpha")
+s_means <- matrix(c(-14, -15.1, -11.03, -14.44, 3.06, 7.05, 13.72, 5.96), ncol = 2, nrow = 4)
+s_sds <- matrix(c(0.48, 0.38, 0.48, 0.43, 0.46, 0.39, 0.42, 0.48), ncol = 2, nrow = 4)
+c_means <- matrix(c(2.63, 1.59, 3.41, 3.04, 3.28, 2.34, 2.14, 2.36), ncol = 2, nrow = 4)
+c_sds <- matrix(c(0.41, 0.44, 0.34, 0.46, 0.46, 0.48, 0.46, 0.66), ncol = 2, nrow = 4)
+conc <- matrix(c(0.02, 0.1, 0.12, 0.04, 0.02, 0.1, 0.09, 0.05), ncol = 2, nrow = 4)
+
+simmr_in <- simmr_load(
+  mixtures = mix,
+  source_names = s_names,
+  source_means = s_means,
+  source_sds = s_sds,
+  correction_means = c_means,
+  correction_sds = c_sds,
+  concentration_means = conc
+)
+
+plot(simmr_in)
+?simmr_mcmc
+simmr_out <- simmr_mcmc(simmr_in)
+summary(simmr_out, type = 'diagnostics')
+post_pred <- posterior_predictive(simmr_out)
+plot(simmr_out, type = 'density')
+
+compare_sources(simmr_out, 
+                source_names = c('Zostera','U.lactuca'))
+
+```

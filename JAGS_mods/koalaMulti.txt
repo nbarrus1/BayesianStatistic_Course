@@ -1,0 +1,7 @@
+model{
+  Y[1:9] ~ dmulti(p[1:9], N)     # N is equal to sum(Y[])
+  # number of koalas in each tooth wear class drawn from a multinomial distribution
+  p[1:9] ~ ddirch(alpha[])
+  # uninformative prior for proportions (p[]) if all values of alpha are equal to one
+}
+

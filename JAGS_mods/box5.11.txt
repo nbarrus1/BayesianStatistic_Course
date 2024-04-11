@@ -1,0 +1,22 @@
+model
+{
+  mean[1] ~ dnorm(0.0, 1.0E-6)
+  mean[2] ~ dnorm(0.0, 1.0E-6)
+
+  sd[1] ~ dunif(0, 100)
+  sd[2] ~ dunif(0, 100)
+  correl ~ dunif(-1, 1)
+
+  covar[1,1] <- sd[1]*sd[1]
+  covar[2,2] <- sd[2]*sd[2]
+  covar[1,2] <- correl*sd[1]*sd[2]
+  covar[2,1] <- correl*sd[1]*sd[2]
+
+  omega[1 : 2 , 1 : 2]  <- inverse(covar[ , ])
+
+  for (i in 1:N)
+  {
+    Y[i, 1:2] ~ dmnorm(mean[], omega[ , ])
+  }
+}
+

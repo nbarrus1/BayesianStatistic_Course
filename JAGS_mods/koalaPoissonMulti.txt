@@ -1,0 +1,11 @@
+model{
+  alpha[1]<-0
+  for(i in 2:9) {alpha[i]~dnorm(0,1.0E-6)}
+  lambda~dunif(-1000,1000) #sample size parameter
+  for(i in 1:9) {
+    log(mu[i])<-lambda+alpha[i]
+    Y[i]~dpois(mu[i])
+    p[i]<-mu[i]/sum(mu[])
+  }
+}
+
